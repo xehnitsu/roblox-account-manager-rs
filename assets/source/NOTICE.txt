@@ -1,0 +1,3 @@
+team_KX4_icon.ico is the application icon of ic3w0lf22/Roblox-Account-Manager
+(https://github.com/ic3w0lf22/Roblox-Account-Manager, GPL-3.0). It is recolored
+by ..\make-icon.ps1 to produce ..\icon.png and ..\icon.ico.

@@ -1,0 +1,62 @@
+use anyhow::{Result, anyhow};
+use serde::Deserialize;
+use serde_json::json;
+
+use super::{check, client, cookie_header, send_with_csrf};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PresenceType {
+    Offline,
+    Online,
+    InGame,
+    InStudio,
+    Invisible,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct Presence {
+    pub kind: PresenceType,
+    /// Place the user is in; differs from the launched place after a teleport.
+    pub place_id: Option<u64>,
+    /// Job ID of the server the user is in, when visible to the caller.
+    pub job_id: Option<String>,
+}
+
+/// Presence of `user_id` as seen by the account owning `cookie`. Querying an
+/// account's own presence with its own cookie reveals the job ID.
+pub async fn presence(cookie: &str, user_id: u64) -> Result<Presence> {
+    #[derive(Deserialize)]
+    struct Item {
+        #[serde(rename = "userPresenceType")]
+        kind: u8,
+        #[serde(rename = "placeId")]
+        place_id: Option<u64>,
+        #[serde(rename = "gameId")]
+        game_id: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        #[serde(rename = "userPresences")]
+        user_presences: Vec<Item>,
+    }
+    let body = json!({ "userIds": [user_id] });
+    let resp = send_with_csrf(|| {
+        client()
+            .post("https://presence.roblox.com/v1/presence/users")
+            .header("Cookie", cookie_header(cookie))
+            .json(&body)
+    })
+    .await?;
+    let r: Resp = check(resp).await?.json().await?;
+    let item = r.user_presences.into_iter().next().ok_or_else(|| anyhow!("no presence data"))?;
+    let kind = match item.kind {
+        0 => PresenceType::Offline,
+        1 => PresenceType::Online,
+        2 => PresenceType::InGame,
+        3 => PresenceType::InStudio,
+        4 => PresenceType::Invisible,
+        _ => PresenceType::Unknown,
+    };
+    Ok(Presence { kind, place_id: item.place_id, job_id: item.game_id.filter(|s| !s.is_empty()) })
+}
