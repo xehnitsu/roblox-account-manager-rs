@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
+use super::process::ProcessHandle;
 use super::{LaunchTarget, anti_afk, kill_process, launch, roblox_processes};
 use crate::app::Shared;
 use crate::applog::log;
@@ -20,6 +21,8 @@ pub enum Status {
     NoProcess,
     WaitingRetry,
     GaveUp,
+    /// The client exited cleanly (exit code 0), e.g. Alt+F4 or leaving the game.
+    Closed,
     Stopped,
     Failed(String),
 }
@@ -36,6 +39,10 @@ pub struct Session {
     /// Place of `job_id`. Differs from the target place after an in-game teleport.
     pub job_place_id: Option<u64>,
     pub process: Option<(u32, u64)>,
+    /// Kept open to read the exit code once the client exits.
+    pub handle: Option<ProcessHandle>,
+    /// Set when the app kills the client itself to restart it.
+    pub restarting: bool,
     pub status: Status,
     pub retries: u32,
     pub next_retry: Option<Instant>,
@@ -74,6 +81,8 @@ pub fn start_session(shared: &Arc<Shared>, account_id: Uuid, target: LaunchTarge
         job_place_id: target.place_id(),
         target,
         process: None,
+        handle: None,
+        restarting: false,
         status: Status::Launching,
         retries: 0,
         next_retry: None,
@@ -102,6 +111,8 @@ async fn run_launch(shared: Arc<Shared>, sid: u64) {
         match result {
             Ok(Some(p)) => {
                 s.process = Some(p);
+                s.handle = ProcessHandle::open(p.0);
+                s.restarting = false;
                 s.status = Status::Running;
                 s.running_since = Some(Instant::now());
                 s.last_presence = None;
@@ -127,6 +138,7 @@ fn schedule_retry(s: &mut Session, cfg: &crate::config::AutoRejoinConfig) {
     s.status = Status::WaitingRetry;
     s.next_retry = Some(Instant::now() + Duration::from_secs(delay));
     s.process = None;
+    s.handle = None;
     log(format!("{}: rejoin {}/{} in {delay} s", s.label, s.retries, cfg.max_retries));
 }
 
@@ -134,6 +146,7 @@ pub fn stop_session(shared: &Shared, sid: u64) {
     shared.update_session(sid, |s| {
         s.status = Status::Stopped;
         s.next_retry = None;
+        s.handle = None;
         if let Some((pid, _)) = s.process.take() {
             kill_process(pid);
         }
@@ -228,7 +241,17 @@ fn tick(shared: &Arc<Shared>) -> usize {
                     let Some(p) = s.process else { continue };
                     if !alive.contains(&p) {
                         changed = true;
-                        log(format!("{}: Roblox (PID {}) exited", s.label, p.0));
+                        let code = s.handle.take().and_then(|h| h.exit_code());
+                        // Exit code 0 means the user closed the client (Alt+F4,
+                        // leaving the game); crashes and kills are non-zero.
+                        if code == Some(0) && !s.restarting {
+                            log(format!("{}: Roblox (PID {}) closed, not rejoining", s.label, p.0));
+                            s.status = Status::Closed;
+                            s.process = None;
+                            continue;
+                        }
+                        let code = code.map_or("unknown".to_owned(), |c| format!("{c:#x}"));
+                        log(format!("{}: Roblox (PID {}) exited (code {code})", s.label, p.0));
                         if cfg.enabled && s.retries < cfg.max_retries {
                             schedule_retry(s, &cfg);
                         } else {
@@ -307,6 +330,7 @@ async fn check_presence(shared: Arc<Shared>, sid: u64, account_id: Uuid) {
                     if s.presence_misses >= 2 {
                         log(format!("{}: presence is {:?}, not in game; restarting client", s.label, p.kind));
                         to_kill = s.process.map(|p| p.0);
+                        s.restarting = true;
                     }
                 }
             }
@@ -332,6 +356,8 @@ mod tests {
             job_id: job.map(str::to_owned),
             job_place_id: None,
             process: None,
+            handle: None,
+            restarting: false,
             status: Status::Running,
             retries,
             next_retry: None,

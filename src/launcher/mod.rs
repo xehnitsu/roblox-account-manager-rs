@@ -2,6 +2,7 @@
 
 pub mod anti_afk;
 pub mod multi_instance;
+mod process;
 pub mod watchdog;
 
 use std::collections::HashSet;

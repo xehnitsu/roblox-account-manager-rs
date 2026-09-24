@@ -18,6 +18,7 @@ fn status_text(s: &Session) -> String {
         }
         Status::GaveUp => "exited (no more retries)".to_owned(),
         Status::Stopped => "stopped".to_owned(),
+        Status::Closed => "closed (not rejoined)".to_owned(),
         Status::Failed(e) => format!("failed: {e}"),
     }
 }

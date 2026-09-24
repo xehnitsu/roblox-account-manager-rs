@@ -4,6 +4,7 @@
 mod accounts;
 mod app;
 mod applog;
+mod browser_login;
 mod config;
 mod launcher;
 mod roblox_api;

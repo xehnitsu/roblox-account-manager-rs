@@ -131,6 +131,12 @@ pub async fn add_account_from_credentials(shared: &Shared, username: &str, passw
     }
 }
 
+/// Logs in through a browser window (see `browser_login`) and adds the account.
+pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(String, String)>) -> Result<String> {
+    let cookie = crate::browser_login::login(credentials.clone()).await?;
+    add_account_from_cookie(shared, &cookie, credentials).await
+}
+
 // ----------------------------------------------------------------- the app --
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -160,6 +166,7 @@ pub struct App {
 impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, rt: tokio::runtime::Handle) -> Self {
         egui_extras::install_image_loaders(&cc.egui_ctx);
+        ui::HttpLoader::install(&cc.egui_ctx);
         let config = Config::load();
         cc.egui_ctx.set_zoom_factor(config.ui_scale.clamp(0.5, 3.0));
         let shared = Arc::new(Shared {
