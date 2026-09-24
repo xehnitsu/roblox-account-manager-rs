@@ -31,6 +31,16 @@ impl State {
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             ui.heading("Appearance");
             ui.horizontal(|ui| {
+                ui.label("Theme:");
+                egui::ComboBox::from_id_salt("theme").selected_text(cfg.theme.name()).show_ui(ui, |ui| {
+                    for t in crate::config::AppTheme::ALL {
+                        if ui.selectable_value(&mut cfg.theme, t, t.name()).changed() {
+                            super::theme::apply(ui.ctx(), t);
+                        }
+                    }
+                });
+            });
+            ui.horizontal(|ui| {
                 ui.label("UI scale:");
                 let mut zoom = ui.ctx().zoom_factor();
                 if ui.add(egui::Slider::new(&mut zoom, 0.75..=2.5).step_by(0.05).suffix("×")).changed() {
@@ -77,8 +87,9 @@ impl State {
             ui.separator();
             ui.heading("Launching");
             ui.horizontal(|ui| {
-                ui.label("Extra pause between launches:");
-                ui.add(egui::DragValue::new(&mut cfg.launch_delay_secs).range(0..=120).suffix(" s"));
+                ui.label("Pause between launches:");
+                ui.add(egui::DragValue::new(&mut cfg.launch_delay_ms).range(0..=60_000).speed(50).suffix(" ms"))
+                    .on_hover_text("Only applies when launching several accounts; a single launch starts right away.");
             });
 
             ui.separator();

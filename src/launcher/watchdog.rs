@@ -65,6 +65,14 @@ impl Session {
     }
 }
 
+/// Crashes end with a Windows error status (0xC0000005 access violation,
+/// 0xC0000409 fast fail, ...). Small codes mean the client was closed on
+/// purpose: 0 for Alt+F4 or leaving the game, 1 for a force close (Task
+/// Manager, taskkill, "super Alt+F4").
+pub fn is_crash(exit_code: u32) -> bool {
+    exit_code >= 0x8000_0000
+}
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn start_session(shared: &Arc<Shared>, account_id: Uuid, target: LaunchTarget) {
@@ -242,9 +250,7 @@ fn tick(shared: &Arc<Shared>) -> usize {
                     if !alive.contains(&p) {
                         changed = true;
                         let code = s.handle.take().and_then(|h| h.exit_code());
-                        // Exit code 0 means the user closed the client (Alt+F4,
-                        // leaving the game); crashes and kills are non-zero.
-                        if code == Some(0) && !s.restarting {
+                        if code.is_some_and(|c| !is_crash(c)) && !s.restarting {
                             log(format!("{}: Roblox (PID {}) closed, not rejoining", s.label, p.0));
                             s.status = Status::Closed;
                             s.process = None;
@@ -381,6 +387,14 @@ mod tests {
         let mut s = session(place.clone(), Some("job"), 1);
         s.job_place_id = Some(9);
         assert_eq!(s.relaunch_target(), LaunchTarget::Job { place_id: 9, job_id: "job".into() });
+    }
+
+    #[test]
+    fn crash_codes() {
+        assert!(!is_crash(0));
+        assert!(!is_crash(1));
+        assert!(is_crash(0xC000_0005));
+        assert!(is_crash(0xC000_0409));
     }
 
     #[test]

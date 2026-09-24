@@ -20,11 +20,12 @@ pub struct Config {
     pub auto_rejoin: AutoRejoinConfig,
     pub anti_afk: AntiAfkConfig,
     /// Pause between launches when launching several accounts at once.
-    pub launch_delay_secs: u64,
+    pub launch_delay_ms: u64,
     /// Last values typed into the launch panel.
     pub last_place_id: String,
     /// UI zoom factor (Ctrl + / Ctrl - also change it).
     pub ui_scale: f32,
+    pub theme: AppTheme,
 }
 
 impl Default for Config {
@@ -33,9 +34,10 @@ impl Default for Config {
             multi_instance: MultiInstanceConfig::default(),
             auto_rejoin: AutoRejoinConfig::default(),
             anti_afk: AntiAfkConfig::default(),
-            launch_delay_secs: 8,
+            launch_delay_ms: 500,
             last_place_id: String::new(),
             ui_scale: 1.0,
+            theme: AppTheme::default(),
         }
     }
 }
@@ -115,6 +117,29 @@ impl AfkKey {
             AfkKey::Space => "Space (jump)",
             AfkKey::W => "W (step forward)",
             AfkKey::RightArrow => "Right arrow (turn camera)",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AppTheme {
+    /// Grey; follows the Windows light/dark setting.
+    #[default]
+    Default,
+    /// The 2011 Roblox website.
+    Classic,
+    /// Dark variant of `Classic`.
+    ClassicDark,
+}
+
+impl AppTheme {
+    pub const ALL: [AppTheme; 3] = [AppTheme::Default, AppTheme::Classic, AppTheme::ClassicDark];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            AppTheme::Default => "Default",
+            AppTheme::Classic => "Classic Roblox",
+            AppTheme::ClassicDark => "Classic Roblox (dark)",
         }
     }
 }

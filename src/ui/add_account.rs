@@ -178,7 +178,7 @@ impl State {
                 ui.add_space(6.0);
                 match m {
                     Ok(s) => {
-                        ui.colored_label(egui::Color32::from_rgb(80, 170, 90), s);
+                        ui.colored_label(super::theme::success_color(ui), s);
                     }
                     Err(s) => error_label(ui, s),
                 }

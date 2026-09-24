@@ -3355,6 +3355,7 @@ dependencies = [
  "getrandom 0.4.3",
  "image",
  "open",
+ "raw-window-handle",
  "regex",
  "reqwest",
  "serde",
@@ -3365,6 +3366,7 @@ dependencies = [
  "url",
  "uuid",
  "windows",
+ "windows-registry",
  "winresource",
  "zip",
 ]
