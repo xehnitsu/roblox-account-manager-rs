@@ -4,7 +4,7 @@ use reqwest::header::SET_COOKIE;
 use serde::Deserialize;
 use serde_json::json;
 
-use super::{check, client, cookie_header, send_with_csrf};
+use super::{check, client, cookie_header, send_with_csrf, send_with_csrf_cached};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UserInfo {
@@ -32,6 +32,7 @@ pub async fn avatar_headshot(user_id: u64) -> Result<Option<String>> {
     struct Item {
         #[serde(rename = "imageUrl")]
         image_url: Option<String>,
+        state: Option<String>,
     }
     #[derive(Deserialize)]
     struct Resp {
@@ -40,13 +41,58 @@ pub async fn avatar_headshot(user_id: u64) -> Result<Option<String>> {
     let url = format!(
         "https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds={user_id}&size=48x48&format=Png&isCircular=false"
     );
-    let resp: Resp = check(client().get(url).send().await?).await?.json().await?;
-    Ok(resp.data.into_iter().next().and_then(|i| i.image_url))
+    // A thumbnail that isn't rendered yet comes back as "Pending" with an empty URL.
+    for attempt in 0..4 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        }
+        let resp: Resp = check(client().get(&url).send().await?).await?.json().await?;
+        let Some(item) = resp.data.into_iter().next() else { return Ok(None) };
+        if item.state.as_deref() == Some("Pending") {
+            continue;
+        }
+        return Ok(item.image_url.filter(|u| !u.is_empty()));
+    }
+    Ok(None)
 }
 
 /// Short-lived ticket the Roblox client exchanges for a session.
+/// Tickets fetched ahead of a launch (see `prefetch_ticket`): cookie, when, ticket.
+static PREFETCHED: std::sync::Mutex<Vec<(String, std::time::Instant, String)>> = std::sync::Mutex::new(Vec::new());
+const PREFETCH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// Fetches a ticket ahead of time, e.g. while the pointer is on the Launch
+/// button, so the launch itself doesn't wait for it.
+pub async fn prefetch_ticket(cookie: String) {
+    let fresh = |list: &Vec<(String, std::time::Instant, String)>| {
+        list.iter().any(|(c, at, _)| *c == cookie && at.elapsed() < PREFETCH_MAX_AGE / 2)
+    };
+    if fresh(&PREFETCHED.lock().unwrap()) {
+        return;
+    }
+    if let Ok(ticket) = auth_ticket(&cookie).await {
+        let mut list = PREFETCHED.lock().unwrap();
+        list.retain(|(c, at, _)| *c != cookie && at.elapsed() < PREFETCH_MAX_AGE);
+        list.push((cookie, std::time::Instant::now(), ticket));
+    }
+}
+
+/// A prefetched ticket if one is fresh (tickets are single use, so it's
+/// removed), otherwise a new one.
+pub async fn take_ticket(cookie: &str) -> Result<String> {
+    let cached = {
+        let mut list = PREFETCHED.lock().unwrap();
+        list.retain(|(_, at, _)| at.elapsed() < PREFETCH_MAX_AGE);
+        list.iter().position(|(c, _, _)| c == cookie).map(|i| list.remove(i).2)
+    };
+    match cached {
+        Some(t) => Ok(t),
+        None => auth_ticket(cookie).await,
+    }
+}
+
 pub async fn auth_ticket(cookie: &str) -> Result<String> {
-    let resp = send_with_csrf(|| {
+    let resp = send_with_csrf_cached(Some(cookie), || {
         client()
             .post("https://auth.roblox.com/v1/authentication-ticket/")
             .header("Cookie", cookie_header(cookie))

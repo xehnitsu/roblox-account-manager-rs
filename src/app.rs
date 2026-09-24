@@ -115,6 +115,34 @@ pub async fn add_account_from_cookie(
     Ok(user.name)
 }
 
+/// Fetches avatars for accounts that don't have one (e.g. the thumbnail was
+/// still rendering when the account was added).
+pub async fn fill_missing_avatars(shared: Arc<Shared>) {
+    let missing: Vec<(Uuid, u64)> = shared
+        .accounts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| a.avatar_url.as_deref().is_none_or(str::is_empty))
+        .map(|a| (a.id, a.user_id))
+        .collect();
+    let mut found = 0;
+    for (id, user_id) in missing {
+        if let Ok(Some(url)) = auth::avatar_headshot(user_id).await
+            && let Some(a) = shared.accounts.lock().unwrap().iter_mut().find(|a| a.id == id)
+        {
+            a.avatar_url = Some(url);
+            found += 1;
+        }
+    }
+    if found > 0 {
+        if let Err(e) = shared.save_accounts() {
+            log(format!("saving accounts failed: {e:#}"));
+        }
+        shared.ctx.request_repaint();
+    }
+}
+
 pub enum LoginResult {
     Added(String),
     NeedsBrowser(String),
@@ -160,7 +188,10 @@ pub struct App {
     accounts_ui: ui::account_list::State,
     add_ui: ui::add_account::State,
     servers_ui: ui::server_browser::State,
+    sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
+    /// Title bar colours last applied.
+    title_bar: Option<(egui::Color32, egui::Color32)>,
 }
 
 impl App {
@@ -168,6 +199,7 @@ impl App {
         egui_extras::install_image_loaders(&cc.egui_ctx);
         ui::HttpLoader::install(&cc.egui_ctx);
         let config = Config::load();
+        ui::theme::apply(&cc.egui_ctx, config.theme);
         cc.egui_ctx.set_zoom_factor(config.ui_scale.clamp(0.5, 3.0));
         let shared = Arc::new(Shared {
             accounts: Mutex::new(Vec::new()),
@@ -200,7 +232,9 @@ impl App {
             accounts_ui: ui::account_list::State::new(&config),
             add_ui: Default::default(),
             servers_ui: ui::server_browser::State::new(&config),
+            sessions_ui: ui::sessions::State::default(),
             settings_ui: Default::default(),
+            title_bar: None,
             shared,
             tab: Tab::Accounts,
             lock,
@@ -245,13 +279,19 @@ impl App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        let colors = ui::theme::title_bar_colors(ui.ctx());
+        if self.title_bar != Some(colors) {
+            self.title_bar = Some(colors);
+            crate::title_bar::set_colors(frame, colors.0, colors.1);
+        }
         if !matches!(self.lock, Lock::Unlocked) {
             self.unlock_screen(ui);
             return;
         }
 
-        egui::Panel::top("tabs").show(ui, |ui| {
+        egui::Panel::top("tabs").frame(ui::theme::tab_bar_frame(ui.ctx())).show(ui, |ui| {
+            ui::theme::style_tab_bar(ui);
             ui.horizontal(|ui| {
                 for (tab, name) in [
                     (Tab::Accounts, "Accounts"),
@@ -295,7 +335,7 @@ impl eframe::App for App {
             tab => {
                 egui::CentralPanel::default().show(ui, |ui| match tab {
                     Tab::Servers => self.servers_ui.show(ui, &self.shared, &self.accounts_ui.selected),
-                    Tab::Sessions => ui::sessions::show(ui, &self.shared),
+                    Tab::Sessions => self.sessions_ui.show(ui, &self.shared),
                     _ => self.settings_ui.show(ui, &self.shared),
                 });
             }

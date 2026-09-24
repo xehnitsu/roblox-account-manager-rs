@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use super::rows::{self, Col};
 use super::{Pending, error_label, poll};
 use crate::app::Shared;
 use crate::config::Config;
@@ -11,6 +12,8 @@ use crate::roblox_api::games::{self, Server, ServerPage};
 
 /// `(place_id, page, place name)`.
 type FetchResult = (u64, ServerPage, Option<String>);
+
+const ROW_HEIGHT: f32 = 26.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Sort {
@@ -27,6 +30,7 @@ pub struct State {
     cursor: Option<String>,
     sort: Sort,
     manual_job: String,
+    selected_server: Option<String>,
     task: Option<Pending<anyhow::Result<FetchResult>>>,
     error: Option<String>,
 }
@@ -41,6 +45,7 @@ impl State {
             cursor: None,
             sort: Sort::Ping,
             manual_job: String::new(),
+            selected_server: None,
             task: None,
             error: None,
         }
@@ -137,48 +142,53 @@ impl State {
         ui.weak("Region is not part of Roblox's public server list API, so it isn't shown. Ping is measured by Roblox from the server's side.");
 
         let mut join_job = None;
-        let servers = &self.servers;
-        egui_extras::TableBuilder::new(ui)
-            .striped(true)
-            .resizable(true)
-            .cell_layout(egui::Layout::left_to_right(egui::Align::Center))
-            .column(egui_extras::Column::exact(70.0))
-            .column(egui_extras::Column::exact(70.0))
-            .column(egui_extras::Column::exact(50.0))
-            .column(egui_extras::Column::remainder().at_least(120.0).clip(true))
-            .column(egui_extras::Column::exact(60.0))
-            .header(22.0, |mut h| {
-                for t in ["Players", "Ping", "FPS", "Job ID", ""] {
-                    h.col(|ui| {
-                        ui.strong(t);
-                    });
+        if self.selected_server.as_ref().is_some_and(|id| !self.servers.iter().any(|s| &s.id == id)) {
+            self.selected_server = None;
+        }
+        let can_join = |s: &Server| n_sel > 0 && !(s.playing >= s.max_players && s.max_players > 0);
+        let chosen = self.selected_server.as_ref().and_then(|id| self.servers.iter().find(|s| &s.id == id));
+        if ui
+            .add_enabled(chosen.is_some_and(can_join), egui::Button::new("Join selected server"))
+            .on_hover_text("Or double-click a server")
+            .clicked()
+        {
+            join_job = chosen.map(|s| s.id.clone());
+        }
+
+        let cols = [Col::Fixed(80.0), Col::Fixed(80.0), Col::Fixed(60.0), Col::Fill(1.0)];
+        rows::header(ui, &cols, &["Players", "Ping", "FPS", "Job ID"]);
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, s) in self.servers.iter().enumerate() {
+                let selected = self.selected_server.as_ref() == Some(&s.id);
+                let (inner, resp) = rows::row(ui, i, ROW_HEIGHT, selected, egui::Sense::click(), true);
+                if ui.is_rect_visible(resp.rect) {
+                    let spans = rows::spans(inner, &cols);
+                    let players = format!("{}/{}", s.playing, s.max_players);
+                    let ping = s.ping.map(|p| format!("{p} ms")).unwrap_or_else(|| "–".into());
+                    let fps = s.fps.map(|f| format!("{f:.0}")).unwrap_or_else(|| "–".into());
+                    rows::cells(ui, inner, &spans[..3], &[&players, &ping, &fps], selected);
+                    let color = rows::text_color(ui, selected);
+                    rows::cell(ui, inner, spans[3], egui::RichText::new(&s.id).monospace().color(color));
                 }
-            })
-            .body(|body| {
-                body.rows(26.0, servers.len(), |mut row| {
-                    let s = &servers[row.index()];
-                    row.col(|ui| {
-                        ui.label(format!("{}/{}", s.playing, s.max_players));
-                    });
-                    row.col(|ui| {
-                        ui.label(s.ping.map(|p| format!("{p} ms")).unwrap_or_else(|| "–".into()));
-                    });
-                    row.col(|ui| {
-                        ui.label(s.fps.map(|f| format!("{f:.0}")).unwrap_or_else(|| "–".into()));
-                    });
-                    row.col(|ui| {
-                        if ui.link(egui::RichText::new(&s.id).monospace()).on_hover_text("Click to copy").clicked() {
-                            ui.ctx().copy_text(s.id.clone());
-                        }
-                    });
-                    row.col(|ui| {
-                        let full = s.playing >= s.max_players && s.max_players > 0;
-                        if ui.add_enabled(n_sel > 0 && !full, egui::Button::new("Join")).clicked() {
-                            join_job = Some(s.id.clone());
-                        }
-                    });
+                if resp.clicked() || resp.secondary_clicked() {
+                    self.selected_server = Some(s.id.clone());
+                }
+                if resp.double_clicked() && can_join(s) {
+                    join_job = Some(s.id.clone());
+                }
+                resp.context_menu(|ui| {
+                    if ui.add_enabled(can_join(s), egui::Button::new("Join")).clicked() {
+                        join_job = Some(s.id.clone());
+                        ui.close();
+                    }
+                    if ui.button("Copy job ID").clicked() {
+                        ui.ctx().copy_text(s.id.clone());
+                        ui.close();
+                    }
                 });
-            });
+            }
+        });
         if let Some(job) = join_job {
             join(shared, selected, place_id, job);
         }

@@ -8,6 +8,7 @@ mod browser_login;
 mod config;
 mod launcher;
 mod roblox_api;
+mod title_bar;
 mod ui;
 
 fn main() -> eframe::Result<()> {

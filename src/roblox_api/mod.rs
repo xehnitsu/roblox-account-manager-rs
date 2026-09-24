@@ -4,7 +4,8 @@ pub mod auth;
 pub mod games;
 pub mod presence;
 
-use std::sync::OnceLock;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Result, bail};
@@ -17,6 +18,18 @@ pub fn client() -> &'static Client {
     })
 }
 
+/// Latest published Windows player version, e.g. `version-2366ba214ec740ca`.
+pub async fn latest_player_version() -> Result<String> {
+    #[derive(serde::Deserialize)]
+    struct Resp {
+        #[serde(rename = "clientVersionUpload")]
+        client_version_upload: String,
+    }
+    let url = "https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer";
+    let resp: Resp = check(client().get(url).send().await?).await?.json().await?;
+    Ok(resp.client_version_upload)
+}
+
 pub fn cookie_header(cookie: &str) -> String {
     format!(".ROBLOSECURITY={cookie}")
 }
@@ -25,7 +38,15 @@ pub fn cookie_header(cookie: &str) -> String {
 /// attempt returns 403 with an `x-csrf-token` header, which we echo back.
 /// Retries on 429 with exponential backoff.
 pub async fn send_with_csrf(build: impl Fn() -> RequestBuilder) -> Result<Response> {
-    let mut token: Option<String> = None;
+    send_with_csrf_cached(None, build).await
+}
+
+/// Like `send_with_csrf`, but remembers the token under `key` (e.g. the
+/// account's cookie), which skips the extra round trip next time.
+pub async fn send_with_csrf_cached(key: Option<&str>, build: impl Fn() -> RequestBuilder) -> Result<Response> {
+    static TOKENS: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+    let cached = |k: &str| TOKENS.lock().unwrap().as_ref().and_then(|m| m.get(k).cloned());
+    let mut token: Option<String> = key.and_then(cached);
     let mut backoff = Duration::from_secs(1);
     for _ in 0..6 {
         let mut req = build();
@@ -44,6 +65,9 @@ pub async fn send_with_csrf(build: impl Fn() -> RequestBuilder) -> Result<Respon
             tokio::time::sleep(backoff).await;
             backoff *= 2;
             continue;
+        }
+        if let (Some(k), Some(t)) = (key, &token) {
+            TOKENS.lock().unwrap().get_or_insert_default().insert(k.to_owned(), t.clone());
         }
         return Ok(resp);
     }
