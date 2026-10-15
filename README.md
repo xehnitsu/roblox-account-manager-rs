@@ -1,19 +1,22 @@
 # Roblox Account Manager
 
-Lightweight Windows app for managing multiple Roblox accounts, written in Rust.
+A small Windows app, written in Rust, for running several Roblox accounts side by side.
 
 ## Features
 
-- Encrypted account storage (Windows DPAPI, or AES-256-GCM with a password)
-- Add accounts by cookie, username/password or bulk import
-- Launch into a game, server, private server or Roblox home
-- Multiple Roblox clients at once
-- Recent games and group priority
-- Open roblox.com in a browser logged in as an account
-- Server browser with player count, ping and FPS
-- Auto-rejoin when a client crashes or disconnects
+- Accounts are stored encrypted with Windows DPAPI, or with AES-256-GCM if you set a password
+- Add accounts by logging in, by cookie, or in bulk
+- Launch into a game, a specific server, a private server or the Roblox home screen
+- Run several Roblox clients at once
+- Recent games, account groups and group order
+- Open roblox.com in a window logged in as an account
+- Server browser with player count, ping and FPS, plus a search for the server a player is in
+- Universe tab that lists every place in a game, with game search by name
+- Expired cookies are flagged in the account list
+- Crashed or disconnected clients rejoin on their own
 - Anti-AFK
-- Themes, including a classic 2011 Roblox look
+- Export and import of accounts and settings in one password-protected file
+- Themes, including a 2011 Roblox look
 
 ## Building
 
@@ -23,33 +26,35 @@ Requires Rust (stable, `x86_64-pc-windows-msvc`).
 cargo build --release
 ```
 
-Output: `target\release\roblox-account-manager-rs.exe`.
+The exe ends up at `target\release\roblox-account-manager-rs.exe`.
 
 ## Usage
 
-1. Start the app before Roblox. Multi-instance needs this. The top-right status shows `mutex held` when active.
-2. Add accounts with **Add account** (Username, Cookie or Bulk import).
-3. Select accounts (click, Ctrl+click, Shift+click), enter a place and press **Launch**. **Home** opens the Roblox home screen, **Browser** opens roblox.com.
-4. Right-click accounts to set groups and group order.
-5. **Server browser** picks a specific server.
-6. **Sessions** lists running clients. Crashed clients rejoin, to the same server when possible.
-7. Retries, anti-AFK, theme and password protection are under **Settings**.
+1. Start the app before Roblox, since multi-instance depends on it. The status in the top right reads `mutex held` when it's working.
+2. Add accounts with Add account, using a username, a cookie or a bulk list.
+3. Select accounts (click, Ctrl+click, Shift+click), enter a place and press Launch. Home starts Roblox on its home screen and Browser opens roblox.com as that account.
+4. Right-click accounts to put them in groups and change the group order.
+5. Use the Server browser to join a specific server. Type a username under Find player to locate their server, or press Join to go straight there with the selected accounts.
+6. Use the Universe tab to list all places in a game, or to search for a game by name.
+7. Sessions lists the clients you launched. A crashed client rejoins, to the same server when it can.
+8. Retries, anti-AFK, theme, password protection and export/import are in Settings.
 
 ### handle64 mode
 
-The app can also close Roblox's singleton handles with Sysinternals `handle64.exe`. Requires administrator. Put `handle64.exe` in a `utils\` folder next to the exe, or download it from Settings.
+The app can also close Roblox's singleton handles with Sysinternals `handle64.exe`, which needs administrator rights. Put `handle64.exe` in a `utils\` folder next to the exe, or download it from Settings.
 
 ## Notes
 
-- Username login opens Roblox's login page in a WebView2 window (Edge engine, built into Windows) on a temporary profile. Press **Log in** and solve any captcha or 2-step check. The window closes once you're logged in. Without WebView2 it uses Helium, Chrome, Edge or Brave.
-- **Log in without browser** tries the login API first and falls back to the browser on a captcha.
-- Logging out in a browser invalidates that account's cookie. **Browser** windows block logout for that reason.
+- Logging in with a username opens Roblox's login page in a WebView2 window (the Edge engine built into Windows) on a temporary profile. Press Log in and get through any captcha or 2-step check, and the window closes by itself once you're in. Without WebView2 it falls back to Helium, Chrome, Edge or Brave.
+- Log in without browser tries Roblox's login API first and switches to the browser if a captcha comes up.
+- Logging out in a browser kills that account's saved cookie, so Browser windows block the logout button.
+- Find player first checks the player's online status. If that hides their server, it compares avatars across the place's public servers, which needs one of your accounts because Roblox only lists players to logged-in users.
 - Roblox's public server list has no regions.
-- Anti-AFK *Background* sends keys without changing focus. *Focus* briefly focuses each window. Use Focus if Background doesn't prevent kicks.
+- Anti-AFK has two modes. Background sends keys without changing focus, and Focus briefly brings each window to the front. Switch to Focus if Background doesn't stop the kicks.
 
 ## Data
 
-Stored in `%APPDATA%\RobloxAccountManagerRS\`:
+Everything lives in `%APPDATA%\RobloxAccountManagerRS\`:
 
 | File | Contents |
 |---|---|
@@ -57,7 +62,9 @@ Stored in `%APPDATA%\RobloxAccountManagerRS\`:
 | `settings.json` | Settings (no secrets) |
 | `handle64.exe` | Only if downloaded from Settings |
 
+Exports are `.ramrs` files, saved to Downloads by default.
+
 ## Credits
 
 - Multi-instance approach based on [evanovar/RobloxAccountManager](https://github.com/evanovar/RobloxAccountManager).
-- Icon based on [ic3w0lf22/Roblox-Account-Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager) (GPL-3.0). Regenerate with `powershell -File assets\make-icon.ps1`.
+- Icon based on [ic3w0lf22/Roblox-Account-Manager](https://github.com/ic3w0lf22/Roblox-Account-Manager) (GPL-3.0). Regenerate it with `powershell -File assets\make-icon.ps1`.
