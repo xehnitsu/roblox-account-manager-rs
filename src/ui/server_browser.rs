@@ -11,6 +11,7 @@ use crate::config::Config;
 use crate::launcher::{LaunchTarget, watchdog};
 use crate::roblox_api::find_player::{self, Progress};
 use crate::roblox_api::games::{self, Server, ServerPage};
+use crate::roblox_api::presence::{self, Presence};
 
 /// `(place_id, page, place name)`.
 type FetchResult = (u64, ServerPage, Option<String>);
@@ -39,6 +40,8 @@ pub struct State {
     find_name: String,
     finding: Option<(Pending<anyhow::Result<FindResult>>, Arc<Progress>)>,
     find_status: Option<String>,
+    /// Join the player's server with the selected accounts once found.
+    join_found: bool,
     error: Option<String>,
 }
 
@@ -57,6 +60,7 @@ impl State {
             find_name: String::new(),
             finding: None,
             find_status: None,
+            join_found: false,
             error: None,
         }
     }
@@ -82,7 +86,10 @@ impl State {
     }
 
     /// Searches with the cookie of a selected account, or any account.
-    fn find(&mut self, shared: &Shared, place_id: u64, selected: &HashSet<Uuid>) {
+    /// Uses the player's online status when it shows their server, otherwise
+    /// scans the place they're in, or the entered place.
+    fn find(&mut self, shared: &Shared, place_id: Option<u64>, selected: &HashSet<Uuid>, join: bool) {
+        self.join_found = join;
         self.error = None;
         self.find_status = None;
         let cookie = {
@@ -99,6 +106,14 @@ impl State {
         let p = progress.clone();
         let task = Pending::spawn(shared, async move {
             let (user_id, username) = find_player::user_id(&name).await?;
+            let status = presence::presence(&cookie, user_id).await.ok();
+            if let Some(Presence { place_id: Some(place), job_id: Some(job), .. }) = status {
+                let server = Server { id: job, ..Default::default() };
+                return Ok((place, username, Some(server), games::place_name(place).await.ok()));
+            }
+            let place_id = status.and_then(|s| s.place_id).or(place_id).ok_or_else(|| {
+                anyhow::anyhow!("{username}'s game is hidden. Enter a place ID to search its servers")
+            })?;
             let server = find_player::find_player(place_id, user_id, &cookie, &p).await?;
             let place_name = games::place_name(place_id).await.ok();
             Ok((place_id, username, server, place_name))
@@ -130,6 +145,10 @@ impl State {
             match r {
                 Ok((place_id, username, Some(server), name)) => {
                     self.find_status = Some(format!("{username} is in this server."));
+                    self.place = place_id.to_string();
+                    if self.join_found {
+                        join(shared, selected, place_id, server.id.clone());
+                    }
                     self.loaded_place = Some(place_id);
                     self.place_name = name;
                     self.selected_server = Some(server.id.clone());
@@ -180,15 +199,19 @@ impl State {
                 None => {
                     let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                     let ok = !self.find_name.trim().is_empty();
-                    let clicked = ui
+                    let find = ui
                         .add_enabled(ok, egui::Button::new("Find"))
-                        .on_hover_text("Searches the place's public servers for this player")
+                        .on_hover_text(
+                            "Uses the player's online status if it shows their server, otherwise searches the place's public servers",
+                        )
                         .clicked();
-                    if ok && (clicked || enter) {
-                        match self.place.trim().parse::<u64>() {
-                            Ok(id) => self.find(shared, id, selected),
-                            Err(_) => self.error = Some("place ID must be a number".into()),
-                        }
+                    let join = ui
+                        .add_enabled(ok && !selected.is_empty(), egui::Button::new("Join"))
+                        .on_hover_text("Finds the player, then joins their server with the selected accounts")
+                        .clicked();
+                    if ok && (find || join || enter) {
+                        let place = self.place.trim().parse::<u64>().ok();
+                        self.find(shared, place, selected, join);
                     }
                 }
             }
@@ -257,7 +280,9 @@ impl State {
                 let (inner, resp) = rows::row(ui, i, ROW_HEIGHT, selected, egui::Sense::click(), true);
                 if ui.is_rect_visible(resp.rect) {
                     let spans = rows::spans(inner, &cols);
-                    let players = format!("{}/{}", s.playing, s.max_players);
+                    // A server found through online status has no player count.
+                    let players =
+                        if s.max_players == 0 { "–".to_owned() } else { format!("{}/{}", s.playing, s.max_players) };
                     let ping = s.ping.map(|p| format!("{p} ms")).unwrap_or_else(|| "–".into());
                     let fps = s.fps.map(|f| format!("{f:.0}")).unwrap_or_else(|| "–".into());
                     rows::cells(ui, inner, &spans[..3], &[&players, &ping, &fps], selected);

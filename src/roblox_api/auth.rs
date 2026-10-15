@@ -14,6 +14,18 @@ pub struct UserInfo {
     pub display_name: String,
 }
 
+/// Whether a cookie is still logged in. Errors other than a rejected cookie
+/// (network, rate limit) are returned as errors.
+pub async fn cookie_valid(cookie: &str) -> Result<bool> {
+    match authenticated_user(cookie).await {
+        Ok(_) => Ok(true),
+        Err(e) if e.to_string() == EXPIRED => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+const EXPIRED: &str = "cookie is invalid or expired";
+
 /// Validates a cookie and returns the account it belongs to.
 pub async fn authenticated_user(cookie: &str) -> Result<UserInfo> {
     let resp = client()
@@ -22,7 +34,7 @@ pub async fn authenticated_user(cookie: &str) -> Result<UserInfo> {
         .send()
         .await?;
     if resp.status() == StatusCode::UNAUTHORIZED {
-        bail!("cookie is invalid or expired");
+        bail!(EXPIRED);
     }
     Ok(check(resp).await?.json().await?)
 }

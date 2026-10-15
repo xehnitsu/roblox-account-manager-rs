@@ -4,6 +4,7 @@ pub mod rows;
 pub mod server_browser;
 pub mod sessions;
 pub mod settings;
+pub mod text_menu;
 pub mod theme;
 pub mod universe;
 

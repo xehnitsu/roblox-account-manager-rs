@@ -1,6 +1,7 @@
 //! Lists every place in a game (universe), like the original account
 //! manager's Universe tab. Games with several places (e.g. separate worlds)
-//! only show their start place on the website.
+//! only show their start place on the website. Games can also be searched
+//! by name.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -12,10 +13,13 @@ use super::{Pending, error_label, poll};
 use crate::app::Shared;
 use crate::config::Config;
 use crate::launcher::{LaunchTarget, watchdog};
-use crate::roblox_api::games;
+use crate::roblox_api::games::{self, GameHit};
 
-/// `(game name, places as (id, name))`.
-type LoadResult = (Option<String>, Vec<(u64, String)>);
+enum Loaded {
+    /// Game name and its places as `(id, name)`.
+    Places(Option<String>, Vec<(u64, String)>),
+    Search(Vec<GameHit>),
+}
 
 const ROW_HEIGHT: f32 = 26.0;
 
@@ -24,7 +28,10 @@ pub struct State {
     game_name: Option<String>,
     places: Vec<(u64, String)>,
     selected: Option<u64>,
-    task: Option<Pending<anyhow::Result<LoadResult>>>,
+    results: Vec<GameHit>,
+    /// Showing search results rather than a game's places.
+    show_results: bool,
+    task: Option<Pending<anyhow::Result<Loaded>>>,
     error: Option<String>,
 }
 
@@ -35,6 +42,8 @@ impl State {
             game_name: None,
             places: Vec::new(),
             selected: None,
+            results: Vec::new(),
+            show_results: false,
             task: None,
             error: None,
         }
@@ -44,28 +53,42 @@ impl State {
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) -> Option<u64> {
         if let Some(r) = poll(&mut self.task) {
             match r {
-                Ok((name, places)) => {
+                Ok(Loaded::Places(name, places)) => {
                     self.game_name = name;
                     self.places = places;
                     self.selected = None;
+                    self.show_results = false;
+                }
+                Ok(Loaded::Search(results)) => {
+                    self.results = results;
+                    self.show_results = true;
                 }
                 Err(e) => self.error = Some(format!("{e:#}")),
             }
         }
 
         ui.horizontal(|ui| {
-            ui.label("Place ID:");
-            let edit = ui.add(egui::TextEdit::singleline(&mut self.place).desired_width(160.0));
+            ui.label("Game:");
+            let edit = ui.add(
+                egui::TextEdit::singleline(&mut self.place).hint_text("Place ID, link or name").desired_width(220.0),
+            );
             let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             let busy = self.task.is_some();
-            if (ui.add_enabled(!busy, egui::Button::new("Load places")).clicked() || enter && !busy)
-                && let Some(id) = self.parse_place()
+            if (ui.add_enabled(!busy, egui::Button::new("Go")).clicked() || enter && !busy)
+                && !self.place.trim().is_empty()
             {
-                self.error = None;
-                self.task = Some(Pending::spawn(shared, async move {
-                    let places = games::universe_places(id).await?;
-                    Ok((games::place_name(id).await.ok(), places))
-                }));
+                match crate::launcher::input_place_id(&self.place) {
+                    Some(id) => self.load_places(shared, id),
+                    None => {
+                        self.error = None;
+                        let query = self.place.trim().to_owned();
+                        self.task =
+                            Some(Pending::spawn(
+                                shared,
+                                async move { Ok(Loaded::Search(games::search(&query).await?)) },
+                            ));
+                    }
+                }
             }
             if busy {
                 ui.spinner();
@@ -75,12 +98,19 @@ impl State {
             error_label(ui, e);
         }
         ui.separator();
+        if self.show_results {
+            self.results_list(ui, shared);
+            return None;
+        }
         if self.places.is_empty() {
-            ui.weak("Enter any place of a game to list all of its places.");
+            ui.weak("Search a game by name, or enter any place of a game to list all of its places.");
             return None;
         }
 
         ui.horizontal(|ui| {
+            if !self.results.is_empty() && ui.button("Back to results").clicked() {
+                self.show_results = true;
+            }
             if let Some(name) = &self.game_name {
                 ui.strong(name);
             }
@@ -152,11 +182,50 @@ impl State {
         servers
     }
 
-    fn parse_place(&mut self) -> Option<u64> {
-        let id = crate::launcher::input_place_id(&self.place);
-        if id.is_none() {
-            self.error = Some("enter a place ID or game link".into());
+    fn load_places(&mut self, shared: &Shared, id: u64) {
+        self.error = None;
+        self.task = Some(Pending::spawn(shared, async move {
+            let places = games::universe_places(id).await?;
+            Ok(Loaded::Places(games::place_name(id).await.ok(), places))
+        }));
+    }
+
+    /// Search results. Opening one lists its places.
+    fn results_list(&mut self, ui: &mut egui::Ui, shared: &Shared) {
+        if self.results.is_empty() {
+            ui.weak("No games found.");
+            return;
         }
-        id
+        ui.weak("Double-click a game to list its places.");
+        let mut open = None;
+        let cols = [Col::Fill(1.0), Col::Fixed(100.0), Col::Fixed(160.0)];
+        rows::header(ui, &cols, &["Name", "Playing", "Place ID"]);
+        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, game) in self.results.iter().enumerate() {
+                let (inner, resp) = rows::row(ui, i, ROW_HEIGHT, false, egui::Sense::click(), true);
+                if ui.is_rect_visible(resp.rect) {
+                    let spans = rows::spans(inner, &cols);
+                    let texts = [game.name.as_str(), &game.players.to_string(), &game.root_place_id.to_string()];
+                    rows::cells(ui, inner, &spans, &texts, false);
+                }
+                if resp.double_clicked() {
+                    open = Some(game.root_place_id);
+                }
+                resp.context_menu(|ui| {
+                    if ui.button("Show places").clicked() {
+                        open = Some(game.root_place_id);
+                        ui.close();
+                    }
+                    if ui.button("Copy place ID").clicked() {
+                        ui.ctx().copy_text(game.root_place_id.to_string());
+                        ui.close();
+                    }
+                });
+            }
+        });
+        if let Some(id) = open {
+            self.load_places(shared, id);
+        }
     }
 }

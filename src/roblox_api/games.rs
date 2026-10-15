@@ -4,7 +4,7 @@ use serde_json::json;
 
 use super::{check, client, cookie_header, send_with_csrf};
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Server {
     /// Job ID.
     pub id: String,
@@ -165,4 +165,50 @@ pub async fn resolve_share_link(cookie: &str, code: &str) -> Result<(u64, String
     let place_id = data["placeId"].as_u64().ok_or_else(|| anyhow!("share link has no place"))?;
     let link_code = data["linkCode"].as_str().ok_or_else(|| anyhow!("share link is invalid or expired"))?.to_owned();
     Ok((place_id, link_code))
+}
+
+/// A game in search results.
+#[derive(Debug, Clone)]
+pub struct GameHit {
+    pub name: String,
+    pub root_place_id: u64,
+    pub players: u64,
+}
+
+/// Searches Roblox games by name, like the website's search bar.
+pub async fn search(query: &str) -> Result<Vec<GameHit>> {
+    #[derive(Deserialize)]
+    struct Content {
+        #[serde(rename = "contentType", default)]
+        content_type: String,
+        #[serde(default)]
+        name: String,
+        #[serde(rename = "rootPlaceId", default)]
+        root_place_id: u64,
+        #[serde(rename = "playerCount", default)]
+        player_count: u64,
+    }
+    #[derive(Deserialize)]
+    struct Group {
+        #[serde(default)]
+        contents: Vec<Content>,
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        #[serde(rename = "searchResults", default)]
+        search_results: Vec<Group>,
+    }
+    let q: String = url::form_urlencoded::byte_serialize(query.trim().as_bytes()).collect();
+    let url = format!(
+        "https://apis.roblox.com/search-api/omni-search?searchQuery={q}&sessionId={}&pageType=all",
+        uuid::Uuid::new_v4()
+    );
+    let resp: Resp = check(send_with_csrf(|| client().get(&url)).await?).await?.json().await?;
+    Ok(resp
+        .search_results
+        .into_iter()
+        .flat_map(|g| g.contents)
+        .filter(|c| c.content_type == "Game" && c.root_place_id != 0)
+        .map(|c| GameHit { name: c.name, root_place_id: c.root_place_id, players: c.player_count })
+        .collect())
 }
