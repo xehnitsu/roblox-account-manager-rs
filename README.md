@@ -28,7 +28,7 @@ Output: `target\release\roblox-account-manager-rs.exe`.
 ## Usage
 
 1. Start the app before Roblox. Multi-instance needs this. The top-right status shows `mutex held` when active.
-2. Add accounts with **Add account**.
+2. Add accounts with **Add account** (Username, Cookie or Bulk import).
 3. Select accounts (click, Ctrl+click, Shift+click), enter a place and press **Launch**. **Home** opens the Roblox home screen, **Browser** opens roblox.com.
 4. Right-click accounts to set groups and group order.
 5. **Server browser** picks a specific server.
@@ -41,9 +41,9 @@ The app can also close Roblox's singleton handles with Sysinternals `handle64.ex
 
 ## Notes
 
-- Username/password login opens Roblox's login page in Helium, Chrome, Edge or Brave on a temporary profile. Press **Log in** and solve any captcha or 2-step check. The window closes once you're logged in.
+- Username login opens Roblox's login page in a WebView2 window (Edge engine, built into Windows) on a temporary profile. Press **Log in** and solve any captcha or 2-step check. The window closes once you're logged in. Without WebView2 it uses Helium, Chrome, Edge or Brave.
 - **Log in without browser** tries the login API first and falls back to the browser on a captcha.
-- Logging out in a browser invalidates that account's cookie. Close the window instead.
+- Logging out in a browser invalidates that account's cookie. **Browser** windows block logout for that reason.
 - Roblox's public server list has no regions.
 - Anti-AFK *Background* sends keys without changing focus. *Focus* briefly focuses each window. Use Focus if Background doesn't prevent kicks.
 
