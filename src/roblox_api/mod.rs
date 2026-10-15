@@ -1,6 +1,7 @@
 //! Thin async wrappers around Roblox's web APIs. No other hosts are contacted.
 
 pub mod auth;
+pub mod find_player;
 pub mod games;
 pub mod presence;
 
