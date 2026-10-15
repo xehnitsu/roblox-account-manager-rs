@@ -23,6 +23,10 @@ pub struct Config {
     pub launch_delay_ms: u64,
     /// Last values typed into the launch panel.
     pub last_place_id: String,
+    /// Places launched recently, newest first.
+    pub recent_places: Vec<u64>,
+    /// Group priority: the account list shows these groups first, in this order.
+    pub group_order: Vec<String>,
     /// UI zoom factor (Ctrl + / Ctrl - also change it).
     pub ui_scale: f32,
     pub theme: AppTheme,
@@ -36,6 +40,8 @@ impl Default for Config {
             anti_afk: AntiAfkConfig::default(),
             launch_delay_ms: 500,
             last_place_id: String::new(),
+            recent_places: Vec::new(),
+            group_order: Vec::new(),
             ui_scale: 1.0,
             theme: AppTheme::default(),
         }
@@ -161,7 +167,17 @@ impl AfkMode {
     }
 }
 
+/// How many places the game history keeps.
+pub const MAX_RECENT_PLACES: usize = 12;
+
 impl Config {
+    /// Moves `place_id` to the front of the game history.
+    pub fn remember_place(&mut self, place_id: u64) {
+        self.recent_places.retain(|p| *p != place_id);
+        self.recent_places.insert(0, place_id);
+        self.recent_places.truncate(MAX_RECENT_PLACES);
+    }
+
     pub fn load() -> Self {
         std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
@@ -170,5 +186,24 @@ impl Config {
         std::fs::create_dir_all(data_dir())?;
         std::fs::write(settings_path(), serde_json::to_vec_pretty(self)?)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn game_history_order() {
+        let mut c = Config::default();
+        for id in [1, 2, 3, 2] {
+            c.remember_place(id);
+        }
+        assert_eq!(c.recent_places, [2, 3, 1]);
+        for id in 10..40 {
+            c.remember_place(id);
+        }
+        assert_eq!(c.recent_places.len(), MAX_RECENT_PLACES);
+        assert_eq!(c.recent_places[0], 39);
     }
 }

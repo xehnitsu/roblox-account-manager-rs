@@ -3,6 +3,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use anyhow::Context as _;
 use uuid::Uuid;
 
 use super::add_account::Mode as AddMode;
@@ -12,24 +13,17 @@ use crate::accounts::Account;
 use crate::app::Shared;
 use crate::applog::log;
 use crate::config::Config;
-use crate::launcher::{TargetInput, game_input, resolve_target, watchdog};
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TargetKind {
-    /// Place, specific server or private server, from the two input fields.
-    Game,
-    Home,
-}
+use crate::launcher::{TargetInput, game_input, input_place_id, resolve_target, watchdog};
 
 pub struct State {
     pub selected: HashSet<Uuid>,
     /// Set when the user picks an entry from the "Add account" menu.
     pub request_add: Option<AddMode>,
     filter: String,
-    kind: TargetKind,
     place: String,
     job_id: String,
     launching: Option<Pending<anyhow::Result<usize>>>,
+    opening_browser: Option<Pending<anyhow::Result<()>>>,
     refreshing: Option<Pending<(usize, usize)>>,
     error: Option<String>,
     confirm_remove: bool,
@@ -41,6 +35,9 @@ pub struct State {
     avatars_checked: bool,
     /// Tickets were prefetched for the current hover over Launch.
     prefetched: bool,
+    /// Place ID in the place field and when it last changed, so the game name
+    /// is looked up after typing pauses.
+    typed: (Option<u64>, std::time::Instant),
 }
 
 const ROW_HEIGHT: f32 = 36.0;
@@ -63,16 +60,38 @@ pub fn reorder(items: &mut Vec<Account>, moving: &HashSet<Uuid>, before: Option<
     *items = rest;
 }
 
+/// Groups in priority order: the saved order first, then any other groups
+/// alphabetically. Ungrouped accounts aren't listed; they always come last.
+pub fn group_order(saved: &[String], accounts: &[Account]) -> Vec<String> {
+    let existing: std::collections::BTreeSet<&str> =
+        accounts.iter().map(|a| a.group.as_str()).filter(|g| !g.is_empty()).collect();
+    let mut order: Vec<String> = saved.iter().filter(|g| existing.contains(g.as_str())).cloned().collect();
+    let mut rest: Vec<&str> = existing.into_iter().filter(|g| !order.iter().any(|o| o == g)).collect();
+    rest.sort_by_key(|g| g.to_lowercase());
+    order.extend(rest.into_iter().map(str::to_owned));
+    order
+}
+
+/// Accounts in display order: by group priority, keeping the saved order
+/// within a group.
+pub fn sorted<'a>(accounts: &'a [Account], saved_order: &[String]) -> Vec<&'a Account> {
+    let order = group_order(saved_order, accounts);
+    let rank = |g: &str| order.iter().position(|o| o == g).unwrap_or(usize::MAX);
+    let mut list: Vec<&Account> = accounts.iter().collect();
+    list.sort_by_key(|a| rank(&a.group));
+    list
+}
+
 impl State {
     pub fn new(cfg: &Config) -> Self {
         Self {
             selected: HashSet::new(),
             request_add: None,
             filter: String::new(),
-            kind: TargetKind::Game,
             place: cfg.last_place_id.clone(),
             job_id: String::new(),
             launching: None,
+            opening_browser: None,
             refreshing: None,
             error: None,
             confirm_remove: false,
@@ -81,19 +100,16 @@ impl State {
             new_group: String::new(),
             avatars_checked: false,
             prefetched: false,
-        }
-    }
-
-    fn target_input(&self) -> anyhow::Result<TargetInput> {
-        match self.kind {
-            TargetKind::Home => Ok(TargetInput::Home),
-            TargetKind::Game => game_input(&self.place, &self.job_id),
+            typed: (None, std::time::Instant::now()),
         }
     }
 
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         if let Some(r) = poll(&mut self.launching) {
             self.error = r.err().map(|e| format!("{e:#}"));
+        }
+        if let Some(Err(e)) = poll(&mut self.opening_browser) {
+            self.error = Some(format!("{e:#}"));
         }
         if let Some((ok, total)) = poll(&mut self.refreshing) {
             log(format!("Refreshed {ok}/{total} account(s)"));
@@ -167,16 +183,13 @@ impl State {
 
     fn launch_panel(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         ui.heading("Launch");
-        ui.radio_value(&mut self.kind, TargetKind::Game, "Game");
-        ui.radio_value(&mut self.kind, TargetKind::Home, "Roblox home");
         ui.add_space(4.0);
-        if self.kind == TargetKind::Game {
-            let full = f32::INFINITY;
-            ui.label("Place ID, game URL or private server link");
-            ui.add(egui::TextEdit::singleline(&mut self.place).desired_width(full).hint_text("920587237"));
-            ui.label("Job ID (optional, joins that server)");
-            ui.add(egui::TextEdit::singleline(&mut self.job_id).desired_width(full).hint_text("Any server"));
-        }
+        let full = f32::INFINITY;
+        self.game_card(ui, shared);
+        ui.label("Place ID, game URL or private server link");
+        ui.add(egui::TextEdit::singleline(&mut self.place).desired_width(full).hint_text("920587237"));
+        ui.label("Job ID (optional, joins that server)");
+        ui.add(egui::TextEdit::singleline(&mut self.job_id).desired_width(full).hint_text("Any server"));
         ui.add_space(6.0);
         let n = self.selected.len();
         let label = match n {
@@ -198,15 +211,133 @@ impl State {
                 self.prefetched = false;
             }
             if resp.clicked() {
-                self.launch(shared);
+                self.launch(shared, false);
             }
             if busy {
+                ui.spinner();
+            }
+        });
+        let opening = self.opening_browser.is_some();
+        ui.horizontal(|ui| {
+            let half = egui::vec2((ui.available_width() - 24.0 - ui.spacing().item_spacing.x) / 2.0, 0.0);
+            if ui
+                .add_enabled(n > 0 && !opening, egui::Button::new("Browser").min_size(half))
+                .on_hover_text(
+                    "Opens roblox.com in a new browser window, logged in as the account. Don't log out there: that ends the session and the saved cookie stops working.",
+                )
+                .clicked()
+            {
+                self.open_in_browser(shared);
+            }
+            if ui
+                .add_enabled(n > 0 && !busy, egui::Button::new("Home").min_size(half))
+                .on_hover_text("Starts Roblox on its home screen instead of a game")
+                .clicked()
+            {
+                self.launch(shared, true);
+            }
+            if opening {
                 ui.spinner();
             }
         });
         if let Some(e) = &self.error {
             error_label(ui, e);
         }
+        self.game_history(ui, shared);
+    }
+
+    /// Recently launched games; clicking one puts it in the place field.
+    fn game_history(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
+        let recent = shared.config.lock().unwrap().recent_places.clone();
+        if recent.is_empty() {
+            return;
+        }
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.strong("Recent games");
+            if ui.small_button("Clear").clicked() {
+                shared.config.lock().unwrap().recent_places.clear();
+                shared.save_config();
+            }
+        });
+        let current = input_place_id(&self.place);
+        let mut remove = None;
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (i, &place_id) in recent.iter().enumerate() {
+                let selected = current == Some(place_id);
+                let (inner, resp) = rows::row(ui, i, 36.0, selected, egui::Sense::click(), true);
+                let info = shared.place_info(place_id);
+                if ui.is_rect_visible(resp.rect) {
+                    let icon = egui::Rect::from_min_size(inner.left_top(), egui::vec2(30.0, 30.0));
+                    match info.as_ref().and_then(|i| i.icon.as_deref()) {
+                        Some(url) => egui::Image::new(url).corner_radius(4.0).paint_at(ui, icon),
+                        None => {
+                            ui.painter().rect_filled(icon, 4.0, ui.visuals().widgets.inactive.bg_fill);
+                        }
+                    }
+                    let name = info.map_or_else(|| format!("Place {place_id}"), |i| i.name);
+                    let color = rows::text_color(ui, selected);
+                    rows::cell(
+                        ui,
+                        inner,
+                        (icon.right() + 8.0, inner.right() + 8.0),
+                        egui::RichText::new(name).color(color),
+                    );
+                }
+                let resp = resp.on_hover_text(format!("Place {place_id}"));
+                if resp.clicked() {
+                    self.place = place_id.to_string();
+                    self.job_id.clear();
+                }
+                resp.context_menu(|ui| {
+                    if ui.button("Copy place ID").clicked() {
+                        ui.ctx().copy_text(place_id.to_string());
+                        ui.close();
+                    }
+                    if ui.button("Remove from history").clicked() {
+                        remove = Some(place_id);
+                        ui.close();
+                    }
+                });
+            }
+        });
+        if let Some(place_id) = remove {
+            shared.config.lock().unwrap().recent_places.retain(|p| *p != place_id);
+            shared.save_config();
+        }
+    }
+
+    /// Game icon and name for the place field, looked up once typing pauses.
+    fn game_card(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
+        let place_id = input_place_id(&self.place);
+        if self.typed.0 != place_id {
+            self.typed = (place_id, std::time::Instant::now());
+        }
+        let Some(place_id) = place_id else { return };
+        let wait = std::time::Duration::from_millis(400).saturating_sub(self.typed.1.elapsed());
+        let info = if wait.is_zero() { shared.place_info(place_id) } else { None };
+        if !wait.is_zero() {
+            ui.ctx().request_repaint_after(wait);
+        }
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(64.0, 64.0), egui::Sense::hover());
+            match info.as_ref().and_then(|i| i.icon.as_deref()) {
+                Some(url) => egui::Image::new(url).corner_radius(6.0).paint_at(ui, rect),
+                None => {
+                    ui.painter().rect_filled(rect, 6.0, ui.visuals().widgets.inactive.bg_fill);
+                }
+            }
+            ui.vertical(|ui| {
+                ui.add_space(4.0);
+                match &info {
+                    Some(info) => ui.add(egui::Label::new(egui::RichText::new(&info.name).strong()).wrap()),
+                    None => ui.weak("Looking up game…"),
+                };
+                ui.weak(format!("Place {place_id}"));
+            });
+        });
+        ui.add_space(4.0);
     }
 
     fn details_panel(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
@@ -238,14 +369,16 @@ impl State {
         }
     }
 
-    fn launch(&mut self, shared: &Arc<Shared>) {
+    /// Launches the selected accounts into the game in the place field, or
+    /// to the Roblox home screen.
+    fn launch(&mut self, shared: &Arc<Shared>, home: bool) {
         self.error = None;
         shared.config.lock().unwrap().last_place_id = self.place.clone();
         shared.save_config();
         // Keep the list order so launches happen top to bottom.
-        let ids: Vec<Uuid> =
-            shared.accounts.lock().unwrap().iter().filter(|a| self.selected.contains(&a.id)).map(|a| a.id).collect();
-        let input = match self.target_input() {
+        let ids = self.selected_in_order(shared);
+        let input = if home { Ok(TargetInput::Home) } else { game_input(&self.place, &self.job_id) };
+        let input = match input {
             Ok(i) => i,
             Err(e) => {
                 self.error = Some(format!("{e:#}"));
@@ -256,11 +389,42 @@ impl State {
         self.launching = Some(Pending::spawn(shared, async move {
             let first = s.account(ids[0]).ok_or_else(|| anyhow::anyhow!("account vanished"))?;
             let target = resolve_target(&first.cookie, &input).await?;
+            if let Some(place_id) = target.place_id() {
+                s.config.lock().unwrap().remember_place(place_id);
+                s.save_config();
+            }
             for id in &ids {
                 watchdog::start_session(&s, *id, target.clone());
             }
             Ok(ids.len())
         }));
+    }
+
+    /// Opens a logged-in browser window for each selected account.
+    fn open_in_browser(&mut self, shared: &Arc<Shared>) {
+        self.error = None;
+        let accounts: Vec<(String, String)> = self
+            .selected_in_order(shared)
+            .into_iter()
+            .filter_map(|id| shared.account(id))
+            .map(|a| (a.username, a.cookie))
+            .collect();
+        self.opening_browser = Some(Pending::spawn(shared, async move {
+            for (username, cookie) in accounts {
+                crate::browser_login::open_logged_in(&cookie)
+                    .await
+                    .with_context(|| format!("opening a browser for {username}"))?;
+                log(format!("Opened a browser logged in as {username}"));
+            }
+            Ok(())
+        }));
+    }
+
+    /// Selected accounts, top to bottom as the list shows them.
+    fn selected_in_order(&self, shared: &Shared) -> Vec<Uuid> {
+        let saved_order = shared.config.lock().unwrap().group_order.clone();
+        let accounts = shared.accounts.lock().unwrap();
+        sorted(&accounts, &saved_order).into_iter().filter(|a| self.selected.contains(&a.id)).map(|a| a.id).collect()
     }
 
     /// Prefetches tickets for the first few selected accounts, in list order.
@@ -311,24 +475,12 @@ impl State {
         }
     }
 
-    fn move_selected(&mut self, shared: &Shared, to_top: bool) {
-        {
-            let mut accounts = shared.accounts.lock().unwrap();
-            let before =
-                if to_top { accounts.iter().find(|a| !self.selected.contains(&a.id)).map(|a| a.id) } else { None };
-            reorder(&mut accounts, &self.selected, before);
-        }
-        if let Err(e) = shared.save_accounts() {
-            log(format!("saving accounts failed: {e:#}"));
-        }
-    }
-
     fn row_menu(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let n = self.selected.len();
         let single = if n == 1 { self.selected.iter().next().and_then(|id| shared.account(*id)) } else { None };
         let label = if n > 1 { format!("Launch {n} accounts") } else { "Launch".to_owned() };
         if ui.add_enabled(self.launching.is_none(), egui::Button::new(label)).clicked() {
-            self.launch(shared);
+            self.launch(shared, false);
             ui.close();
         }
         if let Some(acc) = &single {
@@ -341,28 +493,15 @@ impl State {
                 ui.ctx().copy_text(acc.user_id.to_string());
                 ui.close();
             }
-            if ui.button("Copy cookie").clicked() {
-                ui.ctx().copy_text(acc.cookie.clone());
-                ui.close();
-            }
-            if ui.button("Open profile").clicked() {
-                let _ = open::that_detached(format!("https://www.roblox.com/users/{}/profile", acc.user_id));
-                ui.close();
-            }
         }
         ui.separator();
-        ui.menu_button("Group", |ui| {
-            let mut groups: Vec<String> = shared
-                .accounts
-                .lock()
-                .unwrap()
-                .iter()
-                .map(|a| a.group.clone())
-                .filter(|g| !g.is_empty())
-                .collect::<std::collections::BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            groups.sort_by_key(|g| g.to_lowercase());
+        // Clicking the "New group" field must not close the menu; the entries
+        // close it themselves.
+        let keep_open =
+            egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+        egui::containers::menu::SubMenuButton::new("Group").config(keep_open.clone()).ui(ui, |ui| {
+            let saved_order = shared.config.lock().unwrap().group_order.clone();
+            let groups = group_order(&saved_order, &shared.accounts.lock().unwrap());
             for g in &groups {
                 if ui.button(g).clicked() {
                     self.set_group(shared, g);
@@ -388,18 +527,15 @@ impl State {
                 self.set_group(shared, "");
                 ui.close();
             }
+            if groups.len() > 1 {
+                ui.separator();
+                egui::containers::menu::SubMenuButton::new("Order")
+                    .config(keep_open.clone())
+                    .ui(ui, |ui| group_order_menu(ui, shared));
+            }
         });
         if ui.add_enabled(self.refreshing.is_none(), egui::Button::new("Refresh info")).clicked() {
             self.refresh(shared);
-            ui.close();
-        }
-        ui.separator();
-        if ui.button("Move to top").clicked() {
-            self.move_selected(shared, true);
-            ui.close();
-        }
-        if ui.button("Move to bottom").clicked() {
-            self.move_selected(shared, false);
             ui.close();
         }
         ui.separator();
@@ -411,11 +547,9 @@ impl State {
 
     fn table(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let filter = self.filter.to_lowercase();
-        let rows: Vec<Row> = shared
-            .accounts
-            .lock()
-            .unwrap()
-            .iter()
+        let saved_order = shared.config.lock().unwrap().group_order.clone();
+        let rows: Vec<Row> = sorted(&shared.accounts.lock().unwrap(), &saved_order)
+            .into_iter()
             .filter(|a| {
                 filter.is_empty()
                     || format!("{} {} {} {}", a.username, a.display_name, a.group, a.notes)
@@ -496,7 +630,7 @@ impl State {
                     self.dragging = Some(self.selected.clone());
                 }
                 if resp.double_clicked() && self.launching.is_none() {
-                    self.launch(shared);
+                    self.launch(shared, false);
                 }
                 resp.context_menu(|ui| self.row_menu(ui, shared));
             }
@@ -544,6 +678,32 @@ impl State {
     }
 }
 
+/// Lists the groups with buttons to move them up or down in priority.
+fn group_order_menu(ui: &mut egui::Ui, shared: &Shared) {
+    let saved_order = shared.config.lock().unwrap().group_order.clone();
+    let mut order = group_order(&saved_order, &shared.accounts.lock().unwrap());
+    let mut swap = None;
+    for (i, g) in order.iter().enumerate() {
+        ui.horizontal(|ui| {
+            ui.label(g);
+            // Right to left: the last button added is the leftmost.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.add_enabled(i + 1 < order.len(), egui::Button::new("\u{2B07}").small()).clicked() {
+                    swap = Some((i, i + 1));
+                }
+                if ui.add_enabled(i > 0, egui::Button::new("\u{2B06}").small()).clicked() {
+                    swap = Some((i - 1, i));
+                }
+            });
+        });
+    }
+    if let Some((a, b)) = swap {
+        order.swap(a, b);
+        shared.config.lock().unwrap().group_order = order;
+        shared.save_config();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,6 +726,17 @@ mod tests {
 
     fn order(items: &[Account]) -> Vec<u64> {
         items.iter().map(|a| a.user_id).collect()
+    }
+
+    #[test]
+    fn sorts_by_group_priority() {
+        let mut v: Vec<Account> = (1..=5).map(account).collect();
+        for (i, g) in ["b", "", "a", "b", "c"].into_iter().enumerate() {
+            v[i].group = g.into();
+        }
+        assert_eq!(group_order(&["c".into(), "gone".into()], &v), ["c", "a", "b"]);
+        let ids: Vec<u64> = sorted(&v, &["b".into()]).iter().map(|a| a.user_id).collect();
+        assert_eq!(ids, [1, 4, 3, 5, 2]);
     }
 
     #[test]
