@@ -1,6 +1,6 @@
 //! Shared state and the eframe application shell.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
@@ -15,6 +15,16 @@ use crate::launcher::watchdog::{Session, Status};
 use crate::roblox_api::auth;
 use crate::ui;
 
+#[derive(Clone)]
+pub struct PlaceInfo {
+    /// "Place <id>" if the lookup failed.
+    pub name: String,
+    pub icon: Option<String>,
+}
+
+pub const DEFAULT_SIZE: [f32; 2] = [1260.0, 700.0];
+pub const MIN_SIZE: [f32; 2] = [720.0, 480.0];
+
 /// State shared between the UI thread and background tasks. Every lock is
 /// held only briefly and never across an `.await`.
 pub struct Shared {
@@ -23,6 +33,8 @@ pub struct Shared {
     pub sessions: Mutex<Vec<Session>>,
     pub config: Mutex<Config>,
     pub multi: Mutex<MultiInstance>,
+    /// Game name and icon by place ID; None while loading.
+    pub places: Mutex<HashMap<u64, Option<PlaceInfo>>>,
     pub rt: tokio::runtime::Handle,
     pub ctx: egui::Context,
 }
@@ -34,6 +46,32 @@ impl Shared {
 
     pub fn session(&self, id: u64) -> Option<Session> {
         self.sessions.lock().unwrap().iter().find(|s| s.id == id).cloned()
+    }
+
+    /// Game name and icon of a place, looked up in the background on first use.
+    pub fn place_info(self: &Arc<Self>, place_id: u64) -> Option<PlaceInfo> {
+        let mut places = self.places.lock().unwrap();
+        if let Some(info) = places.get(&place_id) {
+            return info.clone();
+        }
+        places.insert(place_id, None);
+        let s = self.clone();
+        self.rt.spawn(async move {
+            use crate::roblox_api::games;
+            let (name, icon) = tokio::join!(games::place_name(place_id), games::place_icon(place_id));
+            let name = name.unwrap_or_else(|e| {
+                log(format!("looking up the name of place {place_id} failed: {e:#}"));
+                format!("Place {place_id}")
+            });
+            let icon = icon.ok().flatten();
+            s.places.lock().unwrap().insert(place_id, Some(PlaceInfo { name, icon }));
+            s.ctx.request_repaint();
+        });
+        None
+    }
+
+    pub fn place_name(self: &Arc<Self>, place_id: u64) -> Option<String> {
+        self.place_info(place_id).map(|p| p.name)
     }
 
     pub fn update_session(&self, id: u64, f: impl FnOnce(&mut Session)) {
@@ -192,6 +230,8 @@ pub struct App {
     settings_ui: ui::settings::State,
     /// Title bar colours last applied.
     title_bar: Option<(egui::Color32, egui::Color32)>,
+    /// The window size was checked after startup.
+    size_checked: bool,
 }
 
 impl App {
@@ -207,6 +247,7 @@ impl App {
             sessions: Mutex::new(Vec::new()),
             config: Mutex::new(config.clone()),
             multi: Mutex::new(MultiInstance::default()),
+            places: Mutex::new(HashMap::new()),
             rt: rt.clone(),
             ctx: cc.egui_ctx.clone(),
         });
@@ -235,6 +276,7 @@ impl App {
             sessions_ui: ui::sessions::State::default(),
             settings_ui: Default::default(),
             title_bar: None,
+            size_checked: false,
             shared,
             tab: Tab::Accounts,
             lock,
@@ -278,12 +320,36 @@ impl App {
     }
 }
 
+impl App {
+    /// Resizes and centres the window if it opened smaller than the minimum
+    /// size, which Windows otherwise only enforces once the user resizes it.
+    fn fix_window_size(&mut self, ctx: &egui::Context) {
+        let (inner, monitor) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().monitor_size));
+        let Some(inner) = inner else { return };
+        self.size_checked = true;
+        let min = egui::Vec2::from(MIN_SIZE);
+        if inner.width() >= min.x && inner.height() >= min.y {
+            return;
+        }
+        let size = egui::Vec2::from(DEFAULT_SIZE);
+        log(format!("window opened at {:.0}x{:.0}; resizing to the default size", inner.width(), inner.height()));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
+        if let Some(monitor) = monitor {
+            let pos = ((monitor - size) / 2.0).max(egui::Vec2::ZERO);
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos.to_pos2()));
+        }
+    }
+}
+
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         let colors = ui::theme::title_bar_colors(ui.ctx());
         if self.title_bar != Some(colors) {
             self.title_bar = Some(colors);
             crate::title_bar::set_colors(frame, colors.0, colors.1);
+        }
+        if !self.size_checked {
+            self.fix_window_size(ui.ctx());
         }
         if !matches!(self.lock, Lock::Unlocked) {
             self.unlock_screen(ui);

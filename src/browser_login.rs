@@ -1,9 +1,9 @@
 //! Log in through a real browser window.
 //!
 //! Roblox often answers API logins with a captcha. Instead of solving it, this
-//! opens Chrome/Edge/Brave with a throwaway profile on the Roblox login page,
-//! optionally fills in the username and password, and lets the user finish the
-//! login (captcha, 2-step verification) themselves. The `.ROBLOSECURITY` cookie
+//! opens Helium/Chrome/Edge/Brave with a throwaway profile on the Roblox login page,
+//! optionally types in the username and password, and lets the user press
+//! "Log in" and finish the login (captcha, 2-step verification) themselves. The `.ROBLOSECURITY` cookie
 //! is then read over the Chrome DevTools Protocol and the browser is closed.
 
 use std::path::{Path, PathBuf};
@@ -20,13 +20,18 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 use crate::applog::log;
 
 const LOGIN_URL: &str = "https://www.roblox.com/login";
+const HOME_URL: &str = "https://www.roblox.com/home";
+/// Profiles of "open in browser" windows, kept until the window closes.
+const SESSION_PREFIX: &str = "ramrs-browser-";
 const TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-/// Installed Chromium-based browser, preferring Chrome, then Edge, then Brave.
+/// Installed Chromium-based browser, preferring Helium, then Chrome, Edge and
+/// Brave.
 pub fn find_browser() -> Option<PathBuf> {
     let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
-    let roots = [env("ProgramFiles"), env("ProgramFiles(x86)"), env("LOCALAPPDATA")];
+    let roots = [env("LOCALAPPDATA"), env("ProgramFiles"), env("ProgramFiles(x86)")];
     let rels = [
+        r"imput\Helium\Application\chrome.exe",
         r"Google\Chrome\Application\chrome.exe",
         r"Microsoft\Edge\Application\msedge.exe",
         r"BraveSoftware\Brave-Browser\Application\brave.exe",
@@ -37,30 +42,69 @@ pub fn find_browser() -> Option<PathBuf> {
 /// Opens a browser window on the Roblox login page and waits until the user is
 /// logged in. Returns the `.ROBLOSECURITY` cookie.
 pub async fn login(credentials: Option<(String, String)>) -> Result<String> {
-    let exe = find_browser().ok_or_else(|| anyhow!("no Chrome, Edge or Brave installation found"))?;
+    let exe = find_browser().ok_or_else(|| anyhow!("no Helium, Chrome, Edge or Brave installation found"))?;
     remove_stale_profiles();
     let profile = std::env::temp_dir().join(format!("ramrs-login-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&profile)?;
 
     let mut browser = Browser { child: None, profile };
-    let child = Command::new(&exe)
-        .arg(format!("--user-data-dir={}", browser.profile.display()))
-        .args([
-            "--remote-debugging-port=0",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-sync",
-            "--window-size=520,720",
-            "--new-window",
-            LOGIN_URL,
-        ])
-        .spawn()
-        .with_context(|| format!("starting {}", exe.display()))?;
-    browser.child = Some(child);
+    browser.child = Some(spawn(&exe, &browser.profile, &["--window-size=900,860", "--new-window", LOGIN_URL])?);
     log(format!("[login] opened {} for browser login", exe.file_name().unwrap_or_default().display()));
 
     let result = run(&mut browser, credentials).await;
     browser.close().await;
+    result
+}
+
+/// Starts the browser on a throwaway profile with DevTools on a random local port.
+fn spawn(exe: &Path, profile: &Path, args: &[&str]) -> Result<Child> {
+    Command::new(exe)
+        .arg(format!("--user-data-dir={}", profile.display()))
+        .args(["--remote-debugging-port=0", "--no-first-run", "--no-default-browser-check", "--disable-sync"])
+        .args(args)
+        .spawn()
+        .with_context(|| format!("starting {}", exe.display()))
+}
+
+/// Opens a browser window already logged in as the account behind `cookie`,
+/// on its own throwaway profile. The window stays open after this returns.
+pub async fn open_logged_in(cookie: &str) -> Result<()> {
+    let exe = find_browser().ok_or_else(|| anyhow!("no Helium, Chrome, Edge or Brave installation found"))?;
+    remove_unused_profiles(SESSION_PREFIX);
+    let profile = std::env::temp_dir().join(format!("{SESSION_PREFIX}{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&profile)?;
+    let mut browser = Browser { child: None, profile };
+    browser.child = Some(spawn(&exe, &browser.profile, &["--new-window", "about:blank"])?);
+
+    let result = async {
+        let ws_url = browser.devtools_url().await?;
+        let (ws, _) = tokio_tungstenite::connect_async(&ws_url).await.context("connecting to browser")?;
+        let mut cdp = Cdp { ws, next_id: 0 };
+        let cookie = json!({
+            "name": ".ROBLOSECURITY", "value": cookie, "domain": ".roblox.com", "path": "/",
+            "secure": true, "httpOnly": true,
+        });
+        cdp.call("Storage.setCookies", json!({ "cookies": [cookie] }), None).await?;
+        // Load the home page in the blank tab, or a new one if it's gone.
+        let blank = pages(&mut cdp).await?.into_iter().next();
+        match blank {
+            Some((target, _)) => {
+                let attached =
+                    cdp.call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None).await?;
+                let session = attached["sessionId"].as_str().ok_or_else(|| anyhow!("no session id"))?.to_owned();
+                cdp.call("Page.navigate", json!({ "url": HOME_URL }), Some(&session)).await?;
+                let _ = cdp.call("Target.detachFromTarget", json!({ "sessionId": session }), None).await;
+            }
+            None => {
+                cdp.call("Target.createTarget", json!({ "url": HOME_URL }), None).await?;
+            }
+        }
+        anyhow::Ok(())
+    }
+    .await;
+    if result.is_err() {
+        browser.close().await;
+    }
     result
 }
 
@@ -78,8 +122,7 @@ async fn run(browser: &mut Browser, credentials: Option<(String, String)>) -> Re
 
 async fn wait_for_login(cdp: &mut Cdp, credentials: Option<(String, String)>) -> Result<String> {
     const CLOSED: &str = "browser window was closed before the login finished";
-    let fill_script = credentials.map(|(u, p)| fill_script(&u, &p));
-    let mut filled = fill_script.is_none();
+    let mut filled = credentials.is_none();
     let started = Instant::now();
     let mut empty_ticks = 0;
 
@@ -91,8 +134,8 @@ async fn wait_for_login(cdp: &mut Cdp, credentials: Option<(String, String)>) ->
             return Ok(cookie);
         }
         let Ok(pages) = pages(cdp).await else { bail!(CLOSED) };
-        if !filled && let Some(script) = &fill_script {
-            filled = try_fill(cdp, &pages, script).await.unwrap_or(false);
+        if !filled && let Some((user, pass)) = &credentials {
+            filled = try_fill(cdp, &pages, user, pass).await.unwrap_or(false);
         }
         // The browser can stay alive in the background after its last window
         // closes, so no open tabs for a few seconds also counts as closed.
@@ -130,39 +173,42 @@ async fn pages(cdp: &mut Cdp) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
-/// Fills the login form in the login tab. Returns true once the form was found.
-async fn try_fill(cdp: &mut Cdp, pages: &[(String, String)], script: &str) -> Result<bool> {
+/// Types the username and password into the login tab, as if pasted, and
+/// leaves pressing "Log in" (and any captcha) to the user. Returns true once
+/// the form was found.
+async fn try_fill(cdp: &mut Cdp, pages: &[(String, String)], user: &str, pass: &str) -> Result<bool> {
     let Some((target, _)) = pages.iter().find(|(_, url)| url.contains("roblox.com/login")) else {
         return Ok(false);
     };
     let attached = cdp.call("Target.attachToTarget", json!({ "targetId": target, "flatten": true }), None).await?;
     let session = attached["sessionId"].as_str().ok_or_else(|| anyhow!("no session id"))?.to_owned();
-    let res =
-        cdp.call("Runtime.evaluate", json!({ "expression": script, "returnByValue": true }), Some(&session)).await?;
+    let result = fill(cdp, &session, user, pass).await;
     let _ = cdp.call("Target.detachFromTarget", json!({ "sessionId": session }), None).await;
-    Ok(res["result"]["value"] == true)
+    result
 }
 
-/// Sets the React-controlled inputs and presses the login button. Any captcha
-/// that follows is left to the user.
-fn fill_script(username: &str, password: &str) -> String {
-    let u = serde_json::to_string(username).unwrap_or_default();
-    let p = serde_json::to_string(password).unwrap_or_default();
+async fn fill(cdp: &mut Cdp, session: &str, user: &str, pass: &str) -> Result<bool> {
+    for (id, text) in [("login-username", user), ("login-password", pass)] {
+        let res = cdp
+            .call("Runtime.evaluate", json!({ "expression": focus_script(id), "returnByValue": true }), Some(session))
+            .await?;
+        if res["result"]["value"] != true {
+            return Ok(false);
+        }
+        cdp.call("Input.insertText", json!({ "text": text }), Some(session)).await?;
+    }
+    Ok(true)
+}
+
+/// Focuses and empties an input; false if it isn't on the page (yet).
+fn focus_script(id: &str) -> String {
     format!(
         r#"(function() {{
-    var user = document.getElementById('login-username');
-    var pass = document.getElementById('login-password');
-    var btn = document.getElementById('login-button');
-    if (!user || !pass || !btn) return false;
-    function set(el, value) {{
-        var setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value').set;
-        setter.call(el, value);
-        el.dispatchEvent(new Event('input', {{ bubbles: true }}));
-    }}
-    set(user, {u});
-    set(pass, {p});
-    setTimeout(function() {{ btn.click(); }}, 300);
-    return true;
+    var el = document.getElementById('{id}');
+    if (!el) return false;
+    el.focus();
+    el.select();
+    return document.activeElement === el;
 }})()"#
     )
 }
@@ -242,6 +288,23 @@ impl Browser {
     }
 }
 
+/// Deletes "open in browser" profiles whose browser has closed. A running
+/// browser keeps its profile's `lockfile` open, so that file can't be deleted.
+fn remove_unused_profiles(prefix: &str) {
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for e in entries.flatten() {
+        if !e.file_name().to_string_lossy().starts_with(prefix) {
+            continue;
+        }
+        let path = e.path();
+        let lock = path.join("lockfile");
+        if lock.exists() && std::fs::remove_file(&lock).is_err() {
+            continue;
+        }
+        let _ = std::fs::remove_dir_all(path);
+    }
+}
+
 /// Deletes temporary profiles left behind by earlier logins.
 fn remove_stale_profiles() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
@@ -277,8 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn fill_script_escapes() {
-        let s = fill_script("bob", "p\"a'ss\\");
-        assert!(s.contains(r#"set(pass, "p\"a'ss\\");"#));
+    fn focus_script_targets_input() {
+        assert!(focus_script("login-password").contains("getElementById('login-password')"));
     }
 }

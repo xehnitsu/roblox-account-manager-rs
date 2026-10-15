@@ -25,12 +25,18 @@ fn status_text(s: &Session) -> String {
     }
 }
 
-fn target_text(s: &Session) -> String {
-    let mut target = s.target.describe();
-    if let (Some(job), false) = (&s.job_id, matches!(s.target, LaunchTarget::Job { .. })) {
-        target += &format!(" (server {})", &job[..job.len().min(8)]);
+fn target_text(s: &Session, shared: &Arc<Shared>) -> String {
+    let Some(place_id) = s.target.place_id() else { return "Roblox home".to_owned() };
+    let game = shared.place_name(place_id).unwrap_or_else(|| format!("Place {place_id}"));
+    let short = |job: &str| job[..job.len().min(8)].to_owned();
+    match &s.target {
+        LaunchTarget::PrivateServer { .. } => format!("{game} (private server)"),
+        LaunchTarget::Job { job_id, .. } => format!("{game} (server {})", short(job_id)),
+        _ => match &s.job_id {
+            Some(job) => format!("{game} (server {})", short(job)),
+            None => game,
+        },
     }
-    target
 }
 
 /// Still running or about to be, so it can be stopped.
@@ -86,10 +92,14 @@ impl State {
                 let status = status_text(s);
                 if ui.is_rect_visible(resp.rect) {
                     let pid = s.process.map(|p| p.0.to_string()).unwrap_or_else(|| "–".into());
-                    let texts = [s.label.as_str(), &target_text(s), &status, &pid, &s.retries.to_string()];
+                    let texts = [s.label.as_str(), &target_text(s, shared), &status, &pid, &s.retries.to_string()];
                     rows::cells(ui, inner, &rows::spans(inner, &cols), &texts, selected);
                 }
-                let resp = resp.on_hover_text(&status);
+                let resp = resp.on_hover_text(format!(
+                    "{}
+{status}",
+                    s.target.describe()
+                ));
                 if resp.clicked() {
                     rows::click(&mut self.selected, &mut self.anchor, s.id, &order, ctrl, shift);
                 }

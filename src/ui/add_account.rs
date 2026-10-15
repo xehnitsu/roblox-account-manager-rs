@@ -143,7 +143,7 @@ impl State {
         let enabled = self.browser_task.is_none() && self.bulk_task.is_none();
         if ui
             .add_enabled(enabled, egui::Button::new("Log in with browser"))
-            .on_hover_text("Opens the Roblox login page in Chrome/Edge. Log in there; the account is added when done.")
+            .on_hover_text("Opens the Roblox login page in your browser (Helium, Chrome, Edge or Brave). Log in there; the account is added when done.")
             .clicked()
         {
             self.message = None;
@@ -206,6 +206,10 @@ impl State {
 
     fn cookie_form(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         ui.label("Paste the value of the .ROBLOSECURITY cookie.");
+        ui.weak(
+            "Don't log out in the browser afterwards: that ends the session and the cookie stops working. \
+             Close the browser or clear its cookies instead, or use \"Log in with username & password\".",
+        );
         ui.add(
             egui::TextEdit::multiline(&mut self.cookie)
                 .password(true)
@@ -225,21 +229,28 @@ impl State {
     }
 
     fn login_form(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
+        let mut enter = false;
         egui::Grid::new("login").num_columns(2).show(ui, |ui| {
             ui.label("Username:");
-            ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(f32::INFINITY));
+            let user = ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(f32::INFINITY));
             ui.end_row();
             ui.label("Password:");
-            ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(f32::INFINITY));
+            let pass =
+                ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(f32::INFINITY));
             ui.end_row();
+            // Enter in either field logs in, like pressing "Log in".
+            enter = (user.lost_focus() || pass.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
         let ready = !self.username.trim().is_empty() && !self.password.is_empty();
         ui.horizontal(|ui| {
             let idle = self.login_task.is_none() && self.browser_task.is_none() && self.bulk_task.is_none();
             if ui
                 .add_enabled(idle && ready, egui::Button::new("Log in"))
-                .on_hover_text("Opens the Roblox login page in Chrome/Edge with your details filled in.")
+                .on_hover_text(
+                    "Opens the Roblox login page in your browser with your details filled in. Press Log in there.",
+                )
                 .clicked()
+                || (enter && idle && ready)
             {
                 self.message = None;
                 let creds = (self.username.trim().to_owned(), self.password.clone());

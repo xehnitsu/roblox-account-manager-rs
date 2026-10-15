@@ -37,7 +37,7 @@ Optionally, the app can also close Roblox's singleton handles using Sysinternals
 
 ## Notes
 
-- Username/password login opens the Roblox login page in Chrome, Edge or Brave (temporary profile) with your details filled in. Solve any captcha or 2-step check there; the account is added and the window closes once you're logged in. **Log in without browser** tries the login API first and falls back to the browser if Roblox asks for a captcha.
+- Username/password login opens the Roblox login page in Helium, Chrome, Edge or Brave (temporary profile) with your details filled in. Press **Log in**, solve any captcha or 2-step check there; the account is added and the window closes once you're logged in. **Log in without browser** tries the login API first and falls back to the browser if Roblox asks for a captcha.
 - Roblox's public server list does not include server regions.
 - Anti-AFK has two modes: *Background* sends key presses directly to the Roblox window without changing focus, and *Focus* briefly focuses each window. Use Focus if Background doesn't keep you from being kicked.
 

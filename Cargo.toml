@@ -9,7 +9,7 @@ anyhow = "1.0.104"
 argon2 = "0.6.0"
 base64 = "0.23.1"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "accesskit", "persistence"] }
+eframe = { version = "0.36.2", default-features = false, features = ["glow", "default_fonts", "accesskit"] }
 egui = "0.36"
 egui_extras = { version = "0.36.2", features = ["http", "image"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }

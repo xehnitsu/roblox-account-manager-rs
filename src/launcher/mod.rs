@@ -67,6 +67,12 @@ fn parse_place(s: &str) -> Result<u64> {
     re.captures(s).and_then(|c| c[1].parse().ok()).ok_or_else(|| anyhow!("'{s}' is not a place ID or game URL"))
 }
 
+/// Place ID in the launch panel's first field, if it shows one without a
+/// lookup (share links only reveal it once resolved).
+pub fn input_place_id(place_or_link: &str) -> Option<u64> {
+    parse_place(place_or_link).ok()
+}
+
 /// Pulls `(place_id, link_code)` out of a classic private-server URL, or the
 /// share code out of a `/share?code=...&type=Server` link.
 pub enum PrivateLink {

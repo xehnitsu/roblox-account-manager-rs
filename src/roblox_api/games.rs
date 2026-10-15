@@ -44,6 +44,36 @@ pub async fn public_servers(place_id: u64, cursor: Option<&str>) -> Result<Serve
     Ok(ServerPage { servers: resp.data, next_cursor: resp.next_page_cursor })
 }
 
+/// URL of a place's game icon, or None if Roblox has none (e.g. moderated).
+pub async fn place_icon(place_id: u64) -> Result<Option<String>> {
+    #[derive(Deserialize)]
+    struct Item {
+        #[serde(rename = "imageUrl")]
+        image_url: Option<String>,
+        state: Option<String>,
+    }
+    #[derive(Deserialize)]
+    struct Resp {
+        data: Vec<Item>,
+    }
+    let url = format!(
+        "https://thumbnails.roblox.com/v1/places/gameicons?placeIds={place_id}&returnPolicy=PlaceHolder&size=150x150&format=Png&isCircular=false"
+    );
+    // A thumbnail that isn't rendered yet comes back as "Pending" with an empty URL.
+    for attempt in 0..4 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        }
+        let resp: Resp = check(client().get(&url).send().await?).await?.json().await?;
+        let Some(item) = resp.data.into_iter().next() else { return Ok(None) };
+        if item.state.as_deref() == Some("Pending") {
+            continue;
+        }
+        return Ok(item.image_url.filter(|u| !u.is_empty()));
+    }
+    Ok(None)
+}
+
 pub async fn place_name(place_id: u64) -> Result<String> {
     #[derive(Deserialize)]
     struct Universe {
