@@ -587,8 +587,21 @@ impl State {
         }
         let order: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
 
-        // Account (after the avatar), group and notes.
-        let cols = [Col::Fixed(38.0), Col::Fill(5.0), Col::Fill(2.0), Col::Fill(3.0)];
+        // Account (after the avatar), group and notes. Account is 24 characters
+        // wide unless a longer name needs more, group fits the longest group,
+        // and notes take the rest.
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let (account_width, group_width) = ui.fonts_mut(|f| {
+            let mut width = |text: &str| f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE).size().x;
+            let min_account = width(&"x".repeat(24));
+            let account = rows.iter().map(|r| width(&r.label)).fold(min_account, f32::max);
+            let min_group = width("Group");
+            let group = rows.iter().map(|r| width(&r.group)).fold(min_group, f32::max);
+            (account + 16.0, group + 16.0)
+        });
+        let account_width = account_width.min(ui.available_width() * 0.5);
+        let group_width = group_width.min(ui.available_width() * 0.25);
+        let cols = [Col::Fixed(38.0), Col::Fixed(account_width), Col::Fixed(group_width), Col::Fill(1.0)];
         rows::header(ui, &cols, &["", "Account", "Group", "Notes"]);
 
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -684,20 +697,22 @@ fn group_order_menu(ui: &mut egui::Ui, shared: &Shared) {
     let saved_order = shared.config.lock().unwrap().group_order.clone();
     let mut order = group_order(&saved_order, &shared.accounts.lock().unwrap());
     let mut swap = None;
-    for (i, g) in order.iter().enumerate() {
-        ui.horizontal(|ui| {
+    // A grid sizes to its content. A right-to-left layout would stretch the
+    // menu across the whole window.
+    egui::Grid::new("group_order").num_columns(2).show(ui, |ui| {
+        for (i, g) in order.iter().enumerate() {
             ui.label(g);
-            // Right to left: the last button added is the leftmost.
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled(i + 1 < order.len(), egui::Button::new("\u{2B07}").small()).clicked() {
-                    swap = Some((i, i + 1));
-                }
+            ui.horizontal(|ui| {
                 if ui.add_enabled(i > 0, egui::Button::new("\u{2B06}").small()).clicked() {
                     swap = Some((i - 1, i));
                 }
+                if ui.add_enabled(i + 1 < order.len(), egui::Button::new("\u{2B07}").small()).clicked() {
+                    swap = Some((i, i + 1));
+                }
             });
-        });
-    }
+            ui.end_row();
+        }
+    });
     if let Some((a, b)) = swap {
         order.swap(a, b);
         shared.config.lock().unwrap().group_order = order;
