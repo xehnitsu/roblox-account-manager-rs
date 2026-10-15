@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use super::{Pending, error_label, poll};
 use crate::accounts::storage::Protection;
+use crate::accounts::transfer;
 use crate::app::Shared;
 use crate::applog::log;
 use crate::config::{AfkKey, AfkMode};
@@ -14,6 +15,14 @@ pub struct State {
     new_pw2: String,
     pw_msg: Option<Result<String, String>>,
     download: Option<Pending<anyhow::Result<PathBuf>>>,
+    /// Open file picker, and whether it's for export (else import).
+    picking: Option<Pending<Option<PathBuf>>>,
+    picking_export: bool,
+    transfer_pw: String,
+    transfer_pw2: String,
+    /// Import only accounts, keeping this PC's settings.
+    keep_settings: bool,
+    transfer_msg: Option<Result<String, String>>,
 }
 
 impl State {
@@ -148,6 +157,8 @@ impl State {
 
             ui.separator();
             self.password_section(ui, shared);
+            ui.separator();
+            self.transfer_section(ui, shared);
         });
 
         if serde_json::to_string(&cfg).unwrap_or_default() != before {
@@ -198,6 +209,89 @@ impl State {
         }
     }
 
+    fn transfer_section(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
+        ui.heading("Export / import");
+        ui.label("Moves accounts, groups and settings to another PC in one password-protected file.");
+        if let Some(picked) = poll(&mut self.picking)
+            && let Some(path) = picked
+        {
+            self.transfer_msg =
+                Some(if self.picking_export { self.export(shared, &path) } else { self.import(shared, &path) });
+        }
+        egui::Grid::new("transfer").num_columns(2).show(ui, |ui| {
+            ui.label("Password:");
+            ui.add(egui::TextEdit::singleline(&mut self.transfer_pw).password(true));
+            ui.end_row();
+            ui.label("Repeat (export):");
+            ui.add(egui::TextEdit::singleline(&mut self.transfer_pw2).password(true));
+            ui.end_row();
+        });
+        ui.horizontal(|ui| {
+            let idle = self.picking.is_none();
+            if ui.add_enabled(idle, egui::Button::new("Export")).clicked() {
+                self.transfer_msg = None;
+                if self.transfer_pw.is_empty() {
+                    self.transfer_msg = Some(Err("enter a password for the file".into()));
+                } else if self.transfer_pw != self.transfer_pw2 {
+                    self.transfer_msg = Some(Err("passwords don't match".into()));
+                } else {
+                    self.picking_export = true;
+                    self.picking = Some(pick_file(shared, true));
+                }
+            }
+            if ui.add_enabled(idle, egui::Button::new("Import")).clicked() {
+                self.transfer_msg = None;
+                if self.transfer_pw.is_empty() {
+                    self.transfer_msg = Some(Err("enter the file's password".into()));
+                } else {
+                    self.picking_export = false;
+                    self.picking = Some(pick_file(shared, false));
+                }
+            }
+            ui.checkbox(&mut self.keep_settings, "Accounts only (keep current settings)");
+        });
+        ui.weak("The file holds every account's login cookie. Keep it and its password private.");
+        match &self.transfer_msg {
+            Some(Ok(m)) => {
+                ui.label(m.as_str());
+            }
+            Some(Err(e)) => error_label(ui, e),
+            None => {}
+        }
+    }
+
+    fn export(&mut self, shared: &Shared, path: &Path) -> Result<String, String> {
+        let bundle = transfer::Bundle {
+            accounts: shared.accounts.lock().unwrap().clone(),
+            settings: shared.config.lock().unwrap().clone(),
+        };
+        transfer::export(path, &self.transfer_pw, &bundle).map_err(|e| format!("{e:#}"))?;
+        self.transfer_pw.clear();
+        self.transfer_pw2.clear();
+        Ok(format!("Exported {} account(s) to {}", bundle.accounts.len(), path.display()))
+    }
+
+    fn import(&mut self, shared: &Shared, path: &Path) -> Result<String, String> {
+        let bundle = transfer::import(path, &self.transfer_pw).map_err(|e| format!("{e:#}"))?;
+        let (added, updated) = transfer::merge(&mut shared.accounts.lock().unwrap(), bundle.accounts);
+        shared.save_accounts().map_err(|e| format!("{e:#}"))?;
+        if !self.keep_settings {
+            let multi = bundle.settings.multi_instance.clone();
+            let theme = bundle.settings.theme;
+            *shared.config.lock().unwrap() = bundle.settings;
+            shared.save_config();
+            shared.multi.lock().unwrap().apply(&multi);
+            super::theme::apply(&shared.ctx, theme);
+        }
+        self.transfer_pw.clear();
+        self.transfer_pw2.clear();
+        log(format!("Imported accounts from {}", path.display()));
+        Ok(format!(
+            "Added {added}, updated {updated} account(s){}",
+            if self.keep_settings { "" } else { " and settings" }
+        ))
+    }
+
     fn set_protection(&mut self, shared: &Shared, p: Protection, ok: &str) -> Result<String, String> {
         let old = std::mem::replace(&mut *shared.protection.lock().unwrap(), p);
         match shared.save_accounts() {
@@ -212,4 +306,23 @@ impl State {
             }
         }
     }
+}
+
+/// Opens the Windows save (export) or open (import) dialog, starting in Downloads.
+fn pick_file(shared: &Shared, export: bool) -> Pending<Option<PathBuf>> {
+    Pending::spawn(shared, async move {
+        tokio::task::spawn_blocking(move || {
+            let dialog = rfd::FileDialog::new()
+                .add_filter("Account export", &[transfer::EXTENSION])
+                .set_directory(transfer::downloads());
+            if export {
+                dialog.set_title("Export accounts").set_file_name(transfer::default_file_name()).save_file()
+            } else {
+                dialog.set_title("Import accounts").pick_file()
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    })
 }
