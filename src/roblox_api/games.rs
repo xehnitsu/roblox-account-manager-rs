@@ -16,6 +16,9 @@ pub struct Server {
     pub fps: Option<f64>,
     #[serde(default)]
     pub ping: Option<u32>,
+    /// Opaque tokens for the players' avatar headshots (see `find_player`).
+    #[serde(rename = "playerTokens", default)]
+    pub player_tokens: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -25,8 +28,9 @@ pub struct ServerPage {
 }
 
 /// One page (up to 100) of public servers. The public API does not expose a
-/// region field, so region is not available here.
-pub async fn public_servers(place_id: u64, cursor: Option<&str>) -> Result<ServerPage> {
+/// region field, so region is not available here. Player tokens are only
+/// filled in when an account's cookie is given.
+pub async fn public_servers(place_id: u64, cursor: Option<&str>, cookie: Option<&str>) -> Result<ServerPage> {
     #[derive(Deserialize)]
     struct Resp {
         data: Vec<Server>,
@@ -40,7 +44,16 @@ pub async fn public_servers(place_id: u64, cursor: Option<&str>) -> Result<Serve
         url.push_str("&cursor=");
         url.push_str(&url::form_urlencoded::byte_serialize(c.as_bytes()).collect::<String>());
     }
-    let resp: Resp = check(client().get(url).send().await?).await?.json().await?;
+    // `send_with_csrf` also retries when rate-limited.
+    let resp = send_with_csrf(|| {
+        let req = client().get(&url);
+        match cookie {
+            Some(c) => req.header("Cookie", cookie_header(c)),
+            None => req,
+        }
+    })
+    .await?;
+    let resp: Resp = check(resp).await?.json().await?;
     Ok(ServerPage { servers: resp.data, next_cursor: resp.next_page_cursor })
 }
 
@@ -74,12 +87,52 @@ pub async fn place_icon(place_id: u64) -> Result<Option<String>> {
     Ok(None)
 }
 
-pub async fn place_name(place_id: u64) -> Result<String> {
+async fn universe_id(place_id: u64) -> Result<u64> {
     #[derive(Deserialize)]
     struct Universe {
         #[serde(rename = "universeId")]
         universe_id: Option<u64>,
     }
+    let u: Universe =
+        check(client().get(format!("https://apis.roblox.com/universes/v1/places/{place_id}/universe")).send().await?)
+            .await?
+            .json()
+            .await?;
+    u.universe_id.ok_or_else(|| anyhow!("place {place_id} not found"))
+}
+
+/// All places of the game (universe) the place belongs to, as `(id, name)`.
+pub async fn universe_places(place_id: u64) -> Result<Vec<(u64, String)>> {
+    #[derive(Deserialize)]
+    struct Place {
+        id: u64,
+        name: String,
+    }
+    #[derive(Deserialize)]
+    struct Page {
+        data: Vec<Place>,
+        #[serde(rename = "nextPageCursor")]
+        next_page_cursor: Option<String>,
+    }
+    let universe_id = universe_id(place_id).await?;
+    let mut places = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut url = format!("https://develop.roblox.com/v1/universes/{universe_id}/places?sortOrder=Asc&limit=100");
+        if let Some(c) = &cursor {
+            url.push_str("&cursor=");
+            url.push_str(&url::form_urlencoded::byte_serialize(c.as_bytes()).collect::<String>());
+        }
+        let page: Page = check(send_with_csrf(|| client().get(&url)).await?).await?.json().await?;
+        places.extend(page.data.into_iter().map(|p| (p.id, p.name)));
+        match page.next_page_cursor {
+            Some(c) => cursor = Some(c),
+            None => return Ok(places),
+        }
+    }
+}
+
+pub async fn place_name(place_id: u64) -> Result<String> {
     #[derive(Deserialize)]
     struct Game {
         name: String,
@@ -88,12 +141,7 @@ pub async fn place_name(place_id: u64) -> Result<String> {
     struct Games {
         data: Vec<Game>,
     }
-    let u: Universe =
-        check(client().get(format!("https://apis.roblox.com/universes/v1/places/{place_id}/universe")).send().await?)
-            .await?
-            .json()
-            .await?;
-    let universe_id = u.universe_id.ok_or_else(|| anyhow!("place {place_id} not found"))?;
+    let universe_id = universe_id(place_id).await?;
     let g: Games =
         check(client().get(format!("https://games.roblox.com/v1/games?universeIds={universe_id}")).send().await?)
             .await?

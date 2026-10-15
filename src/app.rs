@@ -214,6 +214,7 @@ pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(Strin
 pub enum Tab {
     Accounts,
     Servers,
+    Universe,
     Sessions,
     Settings,
 }
@@ -231,6 +232,7 @@ pub struct App {
     accounts_ui: ui::account_list::State,
     add_ui: ui::add_account::State,
     servers_ui: ui::server_browser::State,
+    universe_ui: ui::universe::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
     /// Title bar colours last applied.
@@ -279,6 +281,7 @@ impl App {
             accounts_ui: ui::account_list::State::new(&config),
             add_ui: Default::default(),
             servers_ui: ui::server_browser::State::new(&config),
+            universe_ui: ui::universe::State::new(&config),
             sessions_ui: ui::sessions::State::default(),
             settings_ui: Default::default(),
             title_bar: None,
@@ -368,6 +371,7 @@ impl eframe::App for App {
                 for (tab, name) in [
                     (Tab::Accounts, "Accounts"),
                     (Tab::Servers, "Server browser"),
+                    (Tab::Universe, "Universe"),
                     (Tab::Sessions, "Sessions"),
                     (Tab::Settings, "Settings"),
                 ] {
@@ -407,6 +411,12 @@ impl eframe::App for App {
             tab => {
                 egui::CentralPanel::default().show(ui, |ui| match tab {
                     Tab::Servers => self.servers_ui.show(ui, &self.shared, &self.accounts_ui.selected),
+                    Tab::Universe => {
+                        if let Some(place_id) = self.universe_ui.show(ui, &self.shared, &self.accounts_ui.selected) {
+                            self.servers_ui.load(&self.shared, place_id);
+                            self.tab = Tab::Servers;
+                        }
+                    }
                     Tab::Sessions => self.sessions_ui.show(ui, &self.shared),
                     _ => self.settings_ui.show(ui, &self.shared),
                 });

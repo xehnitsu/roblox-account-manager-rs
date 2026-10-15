@@ -211,9 +211,15 @@ impl State {
         });
         let opening = self.opening_browser.is_some();
         ui.horizontal(|ui| {
-            let half = egui::vec2((ui.available_width() - 24.0 - ui.spacing().item_spacing.x) / 2.0, 0.0);
+            // Split one rect as wide as the Launch button, so both edges line up.
+            let size = egui::vec2(ui.available_width() - 24.0, ui.spacing().interact_size.y);
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            let gap = ui.spacing().item_spacing.x / 2.0;
+            let (mut left, mut right) = rect.split_left_right_at_fraction(0.5);
+            left.max.x -= gap;
+            right.min.x += gap;
             if ui
-                .add_enabled(n > 0 && !opening, egui::Button::new("Browser").min_size(half))
+                .put(left, |ui: &mut egui::Ui| ui.add_enabled(n > 0 && !opening, egui::Button::new("Browser")))
                 .on_hover_text(
                     "Opens roblox.com in a window logged in as the account. Logging out is blocked there so the saved cookie keeps working.",
                 )
@@ -222,7 +228,7 @@ impl State {
                 self.open_in_browser(shared);
             }
             if ui
-                .add_enabled(n > 0 && !busy, egui::Button::new("Home").min_size(half))
+                .put(right, |ui: &mut egui::Ui| ui.add_enabled(n > 0 && !busy, egui::Button::new("Home")))
                 .on_hover_text("Starts Roblox on its home screen instead of a game")
                 .clicked()
             {

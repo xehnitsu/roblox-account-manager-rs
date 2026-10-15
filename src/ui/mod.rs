@@ -5,6 +5,7 @@ pub mod server_browser;
 pub mod sessions;
 pub mod settings;
 pub mod theme;
+pub mod universe;
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
