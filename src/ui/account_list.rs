@@ -46,6 +46,7 @@ const ROW_HEIGHT: f32 = 36.0;
 struct Row {
     id: Uuid,
     label: String,
+    expired: bool,
     avatar: Option<String>,
     group: String,
     notes: String,
@@ -113,10 +114,12 @@ impl State {
         }
         if let Some((ok, total)) = poll(&mut self.refreshing) {
             log(format!("Refreshed {ok}/{total} account(s)"));
+            shared.rt.spawn(crate::app::check_cookies(shared.clone(), Some(self.selected.clone())));
         }
         if !self.avatars_checked {
             self.avatars_checked = true;
             shared.rt.spawn(crate::app::fill_missing_avatars(shared.clone()));
+            shared.rt.spawn(crate::app::check_cookies(shared.clone(), None));
         }
 
         egui::Panel::right("launch_panel").resizable(true).default_size(300.0).size_range(240.0..=520.0).show(
@@ -549,6 +552,7 @@ impl State {
     fn table(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let filter = self.filter.to_lowercase();
         let saved_order = shared.config.lock().unwrap().group_order.clone();
+        let expired = shared.expired.lock().unwrap().clone();
         let rows: Vec<Row> = sorted(&shared.accounts.lock().unwrap(), &saved_order)
             .into_iter()
             .filter(|a| {
@@ -560,6 +564,7 @@ impl State {
             .map(|a| Row {
                 id: a.id,
                 label: a.label(),
+                expired: expired.contains(&a.id),
                 avatar: a.avatar_url.clone().filter(|u| !u.is_empty()),
                 group: a.group.clone(),
                 notes: a.notes.lines().next().unwrap_or("").to_owned(),
@@ -630,9 +635,20 @@ impl State {
                         );
                     }
                     let spans = rows::spans(inner, &cols);
-                    rows::cells(ui, inner, &spans[1..], &[&row.label, &row.group, &row.notes], selected);
+                    if row.expired {
+                        let label = egui::RichText::new(format!("⚠ {}", row.label));
+                        rows::cell(ui, inner, spans[1], label.color(ui.visuals().error_fg_color));
+                        rows::cells(ui, inner, &spans[2..], &[&row.group, &row.notes], selected);
+                    } else {
+                        rows::cells(ui, inner, &spans[1..], &[&row.label, &row.group, &row.notes], selected);
+                    }
                 }
 
+                let resp = if row.expired {
+                    resp.on_hover_text("Cookie expired. Add the account again to log back in.")
+                } else {
+                    resp
+                };
                 if resp.clicked() {
                     rows::click(&mut self.selected, &mut self.anchor, row.id, &order, ctrl, shift);
                 }

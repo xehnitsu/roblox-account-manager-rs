@@ -33,6 +33,8 @@ pub struct Shared {
     pub sessions: Mutex<Vec<Session>>,
     pub config: Mutex<Config>,
     pub multi: Mutex<MultiInstance>,
+    /// Accounts whose cookie Roblox rejected (see `check_cookies`).
+    pub expired: Mutex<HashSet<Uuid>>,
     /// Game name and icon by place ID; None while loading.
     pub places: Mutex<HashMap<u64, Option<PlaceInfo>>>,
     pub rt: tokio::runtime::Handle,
@@ -122,6 +124,7 @@ pub async fn add_account_from_cookie(
     {
         let mut accounts = shared.accounts.lock().unwrap();
         if let Some(a) = accounts.iter_mut().find(|a| a.user_id == user.id) {
+            shared.expired.lock().unwrap().remove(&a.id);
             a.cookie = cookie;
             a.username = user.name.clone();
             a.display_name = user.display_name.clone();
@@ -155,6 +158,37 @@ pub async fn add_account_from_cookie(
 
 /// Fetches avatars for accounts that don't have one (e.g. the thumbnail was
 /// still rendering when the account was added).
+/// Checks whether each account's cookie still works and marks the expired
+/// ones. Accounts that can't be checked (e.g. no network) keep their mark.
+pub async fn check_cookies(shared: Arc<Shared>, ids: Option<HashSet<Uuid>>) {
+    let accounts: Vec<(Uuid, String, String)> = shared
+        .accounts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|a| ids.as_ref().is_none_or(|ids| ids.contains(&a.id)))
+        .map(|a| (a.id, a.username.clone(), a.cookie.clone()))
+        .collect();
+    let mut expired = 0;
+    for (id, username, cookie) in accounts {
+        match auth::cookie_valid(&cookie).await {
+            Ok(true) => {
+                shared.expired.lock().unwrap().remove(&id);
+            }
+            Ok(false) => {
+                shared.expired.lock().unwrap().insert(id);
+                log(format!("{username}: cookie expired, log in again to fix"));
+                expired += 1;
+            }
+            Err(e) => log(format!("{username}: could not check the cookie: {e:#}")),
+        }
+        shared.ctx.request_repaint();
+    }
+    if expired > 0 {
+        log(format!("{expired} account(s) have an expired cookie"));
+    }
+}
+
 pub async fn fill_missing_avatars(shared: Arc<Shared>) {
     let missing: Vec<(Uuid, u64)> = shared
         .accounts
@@ -239,6 +273,7 @@ pub struct App {
     title_bar: Option<(egui::Color32, egui::Color32)>,
     /// The window size was checked after startup.
     size_checked: bool,
+    text_menu: ui::text_menu::TextMenu,
 }
 
 impl App {
@@ -255,6 +290,7 @@ impl App {
             sessions: Mutex::new(Vec::new()),
             config: Mutex::new(config.clone()),
             multi: Mutex::new(MultiInstance::default()),
+            expired: Mutex::new(HashSet::new()),
             places: Mutex::new(HashMap::new()),
             rt: rt.clone(),
             ctx: cc.egui_ctx.clone(),
@@ -286,6 +322,7 @@ impl App {
             settings_ui: Default::default(),
             title_bar: None,
             size_checked: false,
+            text_menu: Default::default(),
             shared,
             tab: Tab::Accounts,
             lock,
@@ -360,6 +397,7 @@ impl eframe::App for App {
         if !self.size_checked {
             self.fix_window_size(ui.ctx());
         }
+        self.text_menu.show(ui.ctx());
         if !matches!(self.lock, Lock::Unlocked) {
             self.unlock_screen(ui);
             return;
