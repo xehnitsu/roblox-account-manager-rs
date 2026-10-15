@@ -10,8 +10,14 @@ mod launcher;
 mod roblox_api;
 mod title_bar;
 mod ui;
+mod webview;
 
 fn main() -> eframe::Result<()> {
+    // A login or browser window runs as its own process (see `webview`).
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some(webview::CHILD_FLAG) {
+        std::process::exit(webview::child_main(args.get(2).map_or("", String::as_str)));
+    }
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().expect("tokio runtime");
     let handle = rt.handle().clone();
 

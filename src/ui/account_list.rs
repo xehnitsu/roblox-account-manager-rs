@@ -139,17 +139,9 @@ impl State {
 
     fn toolbar(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         ui.horizontal_wrapped(|ui| {
-            ui.menu_button("➕ Add account", |ui| {
-                if ui.button("Add by cookie…").clicked() {
-                    self.request_add = Some(AddMode::Cookie);
-                }
-                if ui.button("Log in with username & password…").clicked() {
-                    self.request_add = Some(AddMode::Login);
-                }
-                if ui.button("Bulk import…").clicked() {
-                    self.request_add = Some(AddMode::Bulk);
-                }
-            });
+            if ui.button("➕ Add account").clicked() {
+                self.request_add = Some(AddMode::Login);
+            }
             let n = self.selected.len();
             if self.confirm_remove {
                 ui.strong(format!("Remove {n} account(s)?"));
@@ -223,7 +215,7 @@ impl State {
             if ui
                 .add_enabled(n > 0 && !opening, egui::Button::new("Browser").min_size(half))
                 .on_hover_text(
-                    "Opens roblox.com in a new browser window, logged in as the account. Don't log out there: that ends the session and the saved cookie stops working.",
+                    "Opens roblox.com in a window logged in as the account. Logging out is blocked there so the saved cookie keeps working.",
                 )
                 .clicked()
             {
@@ -411,9 +403,12 @@ impl State {
             .collect();
         self.opening_browser = Some(Pending::spawn(shared, async move {
             for (username, cookie) in accounts {
-                crate::browser_login::open_logged_in(&cookie)
-                    .await
-                    .with_context(|| format!("opening a browser for {username}"))?;
+                let opened = if crate::webview::available() {
+                    crate::webview::open_session(&username, &cookie)
+                } else {
+                    crate::browser_login::open_logged_in(&cookie).await
+                };
+                opened.with_context(|| format!("opening a browser for {username}"))?;
                 log(format!("Opened a browser logged in as {username}"));
             }
             Ok(())
@@ -571,7 +566,7 @@ impl State {
                 if self.filter.is_empty() {
                     ui.label("No accounts yet.");
                     if ui.button("\u{2795} Add account").clicked() {
-                        self.request_add = Some(AddMode::Cookie);
+                        self.request_add = Some(AddMode::Login);
                     }
                 } else {
                     ui.label("No accounts match the filter.");

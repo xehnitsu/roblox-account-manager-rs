@@ -33,7 +33,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             open: false,
-            mode: Mode::Cookie,
+            mode: Mode::Login,
             cookie: String::new(),
             username: String::new(),
             password: String::new(),
@@ -143,7 +143,7 @@ impl State {
         let enabled = self.browser_task.is_none() && self.bulk_task.is_none();
         if ui
             .add_enabled(enabled, egui::Button::new("Log in with browser"))
-            .on_hover_text("Opens the Roblox login page in your browser (Helium, Chrome, Edge or Brave). Log in there; the account is added when done.")
+            .on_hover_text("Opens the Roblox login page in a window. The account is added once you log in.")
             .clicked()
         {
             self.message = None;
@@ -162,8 +162,8 @@ impl State {
             ui.set_width(width);
             ui.heading("Add account");
             ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.mode, Mode::Login, "Username");
                 ui.selectable_value(&mut self.mode, Mode::Cookie, "Cookie");
-                ui.selectable_value(&mut self.mode, Mode::Login, "Username & password");
                 ui.selectable_value(&mut self.mode, Mode::Bulk, "Bulk import");
             });
             ui.separator();
@@ -208,7 +208,7 @@ impl State {
         ui.label("Paste the value of the .ROBLOSECURITY cookie.");
         ui.weak(
             "Don't log out in the browser afterwards: that ends the session and the cookie stops working. \
-             Close the browser or clear its cookies instead, or use \"Log in with username & password\".",
+             Close the browser or clear its cookies instead, or use the Username tab.",
         );
         ui.add(
             egui::TextEdit::multiline(&mut self.cookie)
@@ -246,9 +246,7 @@ impl State {
             let idle = self.login_task.is_none() && self.browser_task.is_none() && self.bulk_task.is_none();
             if ui
                 .add_enabled(idle && ready, egui::Button::new("Log in"))
-                .on_hover_text(
-                    "Opens the Roblox login page in your browser with your details filled in. Press Log in there.",
-                )
+                .on_hover_text("Opens the Roblox login page with your details filled in. Press Log in there.")
                 .clicked()
                 || (enter && idle && ready)
             {
@@ -269,7 +267,7 @@ impl State {
                     Some(Pending::spawn(shared, async move { add_account_from_credentials(&s, &u, &p).await }));
             }
         });
-        ui.label("A browser window opens with your details filled in. Solve any captcha or 2-step check there.");
+        ui.label("A login window opens with your details filled in. Solve any captcha or 2-step check there.");
     }
 
     fn bulk_form(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
@@ -295,7 +293,7 @@ impl State {
             let label = format!("Log in {} account(s) with browser", self.needs_browser.len());
             if ui
                 .add_enabled(enabled, egui::Button::new(label))
-                .on_hover_text("Opens one browser window at a time with the login filled in.")
+                .on_hover_text("Opens one login window at a time with the details filled in.")
                 .clicked()
             {
                 let (s, pairs) = (shared.clone(), std::mem::take(&mut self.needs_browser));
