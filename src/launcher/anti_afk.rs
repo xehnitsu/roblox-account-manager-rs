@@ -78,7 +78,7 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     BOOL(1)
 }
 
-fn windows_for(pids: &HashSet<u32>) -> Vec<HWND> {
+pub(crate) fn windows_for(pids: &HashSet<u32>) -> Vec<HWND> {
     let mut ctx = EnumCtx { pids: pids.clone(), found: Vec::new() };
     // SAFETY: enum_proc only dereferences lparam as EnumCtx for this call.
     unsafe {
@@ -102,7 +102,7 @@ pub fn nudge(pids: &HashSet<u32>, key: AfkKey, mode: AfkMode) -> usize {
 
 /// lParam for WM_KEYDOWN / WM_KEYUP: repeat count 1, scan code, extended bit,
 /// and for key-up the previous-state and transition bits.
-fn key_lparam(scan: u32, extended: bool, up: bool) -> LPARAM {
+pub(crate) fn key_lparam(scan: u32, extended: bool, up: bool) -> LPARAM {
     let mut v: u32 = 1 | (scan << 16);
     if extended {
         v |= 1 << 24;

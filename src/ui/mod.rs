@@ -1,5 +1,7 @@
 pub mod account_list;
 pub mod add_account;
+pub mod friends;
+pub mod macros;
 pub mod rows;
 pub mod server_browser;
 pub mod sessions;

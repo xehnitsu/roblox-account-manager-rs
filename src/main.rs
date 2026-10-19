@@ -7,6 +7,7 @@ mod applog;
 mod browser_login;
 mod config;
 mod launcher;
+mod macros;
 mod roblox_api;
 mod title_bar;
 mod ui;

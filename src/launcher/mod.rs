@@ -1,6 +1,7 @@
 //! Launching Roblox clients for stored accounts.
 
 pub mod anti_afk;
+pub mod client_log;
 pub mod multi_instance;
 mod player;
 mod process;
@@ -23,9 +24,23 @@ pub const PLAYER_EXE: &str = "RobloxPlayerBeta.exe";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LaunchTarget {
     Home,
-    Place { place_id: u64 },
-    PrivateServer { place_id: u64, link_code: String },
-    Job { place_id: u64, job_id: String },
+    Place {
+        place_id: u64,
+    },
+    PrivateServer {
+        place_id: u64,
+        link_code: String,
+    },
+    Job {
+        place_id: u64,
+        job_id: String,
+    },
+    /// Join a user, like the website's Join button: Roblox picks their server.
+    /// `place_id` is the game they're in, for display and rejoining.
+    Follow {
+        place_id: u64,
+        user_id: u64,
+    },
 }
 
 impl LaunchTarget {
@@ -34,7 +49,8 @@ impl LaunchTarget {
             LaunchTarget::Home => None,
             LaunchTarget::Place { place_id }
             | LaunchTarget::PrivateServer { place_id, .. }
-            | LaunchTarget::Job { place_id, .. } => Some(*place_id),
+            | LaunchTarget::Job { place_id, .. }
+            | LaunchTarget::Follow { place_id, .. } => Some(*place_id),
         }
     }
 
@@ -44,6 +60,7 @@ impl LaunchTarget {
             LaunchTarget::Place { place_id } => format!("place {place_id}"),
             LaunchTarget::PrivateServer { place_id, .. } => format!("private server in {place_id}"),
             LaunchTarget::Job { place_id, job_id } => format!("place {place_id}, job {job_id}"),
+            LaunchTarget::Follow { place_id, user_id } => format!("place {place_id}, following user {user_id}"),
         }
     }
 }
@@ -136,6 +153,11 @@ pub async fn resolve_target(cookie: &str, input: &TargetInput) -> Result<LaunchT
 
 /// The join URL the client requests a server from; None for Home.
 fn placelauncher_url(target: &LaunchTarget, tracker_id: u64) -> Option<String> {
+    if let LaunchTarget::Follow { user_id, .. } = target {
+        return Some(format!(
+            "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestFollowUser&browserTrackerId={tracker_id}&userId={user_id}"
+        ));
+    }
     let place_id = target.place_id()?;
     let mut url = format!(
         "https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestGameJob&browserTrackerId={tracker_id}&placeId={place_id}&isPlayTogetherGame=false"
@@ -180,8 +202,32 @@ pub fn kill_process(pid: u32) -> bool {
 }
 
 /// Serializes launches so each new process can be attributed to one account.
-/// Holds when the last client appeared, to space out queued launches.
-static LAUNCH_LOCK: tokio::sync::Mutex<Option<Instant>> = tokio::sync::Mutex::const_new(None);
+/// Holds when the last client appeared and its PID, to space out queued launches.
+static LAUNCH_LOCK: tokio::sync::Mutex<Option<(Instant, u32)>> = tokio::sync::Mutex::const_new(None);
+
+/// Longest wait for the previous account to join before launching the next.
+const JOIN_WAIT_MAX: Duration = Duration::from_secs(30);
+
+/// Waits until the client `pid` has joined a game (per its log), has stopped
+/// running, or `JOIN_WAIT_MAX` has passed since `since`.
+async fn wait_for_join(shared: &crate::app::Shared, pid: u32, since: Instant) {
+    while since.elapsed() < JOIN_WAIT_MAX {
+        let state = shared
+            .sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|s| s.process.is_some_and(|p| p.0 == pid))
+            .map(|s| s.status == watchdog::Status::Running && !s.in_game);
+        match state {
+            Some(false) => return,
+            // The session records its PID a moment after the launch returns.
+            None if since.elapsed() > Duration::from_secs(3) => return,
+            _ => {}
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+}
 
 /// Gets a ticket and starts the client: directly with command-line arguments
 /// when possible, otherwise through the `roblox-player:` link.
@@ -203,9 +249,17 @@ pub async fn launch(
     let ticket_ms = started.elapsed().as_millis();
     // Give the previous client time to settle. Only queued launches wait; the
     // ticket request above already used part of the time.
-    let delay = Duration::from_millis(shared.config.lock().unwrap().launch_delay_ms);
-    if let Some(wait) = last_launch.and_then(|t| delay.checked_sub(t.elapsed())) {
-        tokio::time::sleep(wait).await;
+    let (delay, join) = {
+        let cfg = shared.config.lock().unwrap();
+        (Duration::from_millis(cfg.launch_delay_ms), cfg.wait_for_join)
+    };
+    if let Some((at, pid)) = *last_launch {
+        if join {
+            wait_for_join(shared, pid, at).await;
+        }
+        if let Some(wait) = delay.checked_sub(at.elapsed()) {
+            tokio::time::sleep(wait).await;
+        }
     }
     let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
     let tracker_id: u64 = {
@@ -230,7 +284,7 @@ pub async fn launch(
                 p.0,
                 started.elapsed().as_millis()
             ));
-            *last_launch = Some(Instant::now());
+            *last_launch = Some((Instant::now(), p.0));
         }
         None => log(format!("{}: no new Roblox process seen within 60 s", account.username)),
     }

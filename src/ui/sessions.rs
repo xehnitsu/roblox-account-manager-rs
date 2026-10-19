@@ -12,11 +12,19 @@ const ROW_HEIGHT: f32 = 26.0;
 fn status_text(s: &Session) -> String {
     match &s.status {
         Status::Launching => "launching…".to_owned(),
-        Status::Running => "running".to_owned(),
+        Status::Running => match (&s.last_drop, s.in_game, s.left_game) {
+            (_, true, _) => "in game".to_owned(),
+            (_, _, true) => "running (left the game)".to_owned(),
+            (Some(why), _, _) => format!("running ({why})"),
+            _ => "running".to_owned(),
+        },
         Status::NoProcess => "launched (process not detected, not watched)".to_owned(),
         Status::WaitingRetry => {
             let secs = s.next_retry.map(|t| t.saturating_duration_since(Instant::now()).as_secs()).unwrap_or(0);
-            format!("rejoining in {secs} s")
+            match &s.last_drop {
+                Some(why) => format!("{why}, rejoining in {secs} s"),
+                None => format!("rejoining in {secs} s"),
+            }
         }
         Status::GaveUp => "exited (no more retries)".to_owned(),
         Status::Stopped => "stopped".to_owned(),
@@ -32,6 +40,7 @@ fn target_text(s: &Session, shared: &Arc<Shared>) -> String {
     match &s.target {
         LaunchTarget::PrivateServer { .. } => format!("{game} (private server)"),
         LaunchTarget::Job { job_id, .. } => format!("{game} (server {})", short(job_id)),
+        LaunchTarget::Follow { .. } => format!("{game} (following a player)"),
         _ => match &s.job_id {
             Some(job) => format!("{game} (server {})", short(job)),
             None => game,
