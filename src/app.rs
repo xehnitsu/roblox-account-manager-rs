@@ -437,6 +437,9 @@ impl eframe::App for App {
                 if ui.small_button("Clear").clicked() {
                     crate::applog::clear();
                 }
+                if ui.small_button("File").on_hover_text("Open app.log, which keeps more detail").clicked() {
+                    let _ = std::process::Command::new("notepad").arg(crate::applog::path()).spawn();
+                }
             });
             // Only the visible rows are laid out, so a long log costs nothing.
             let lines = crate::applog::snapshot();
