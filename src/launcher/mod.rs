@@ -2,10 +2,14 @@
 
 pub mod anti_afk;
 pub mod client_log;
+pub mod group_bar;
+pub mod group_watch;
+pub mod group_worker;
 pub mod multi_instance;
 mod player;
 mod process;
 pub mod watchdog;
+pub mod window_group;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

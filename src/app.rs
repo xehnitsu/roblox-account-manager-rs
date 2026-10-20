@@ -476,6 +476,12 @@ impl eframe::App for App {
             }
         }
 
+        if ui.input(|i| i.viewport().close_requested()) {
+            self.sessions_ui.ungroup();
+        } else {
+            self.sessions_ui.show_group(ui.ctx(), &self.shared);
+        }
+
         if let Some(mode) = self.accounts_ui.request_add.take() {
             self.add_ui.open(mode);
         }

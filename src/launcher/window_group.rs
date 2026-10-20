@@ -1,11 +1,27 @@
-//! Tiles Roblox client windows in a grid and moves or minimizes them together.
+//! Tiles Roblox client windows in a borderless grid and moves, minimizes
+//! and raises them together.
+//!
+//! The windows are never owned by the bar: owning another process's windows
+//! merges input handling with it, so one busy client stalls everything.
+//! Instead they become tool windows, which keeps them out of alt-tab and the
+//! taskbar, and the bar hides, shows and raises them itself.
 use windows::Win32::Foundation::{HWND, LPARAM, RECT};
-use windows::Win32::Graphics::Dwm::{DWMWA_EXTENDED_FRAME_BOUNDS, DwmGetWindowAttribute};
-use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GetWindow, GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic,
-    IsWindowVisible, SW_SHOWMINNOACTIVE, SW_SHOWNOACTIVATE, SWP_NOACTIVATE, SWP_NOZORDER, SetWindowPos, ShowWindow,
+use windows::Win32::Graphics::Dwm::{
+    DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
+    DwmSetWindowAttribute,
 };
-use windows::core::BOOL;
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx};
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::UI::Shell::{ITaskbarList, TaskbarList};
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, FindWindowW, GW_OWNER, GWL_EXSTYLE, GWL_STYLE, GWLP_HWNDPARENT, GetForegroundWindow, GetWindow,
+    GetWindowLongPtrW, GetWindowRect, GetWindowTextLengthW, GetWindowThreadProcessId, IsIconic, IsWindow,
+    IsWindowVisible, SW_HIDE, SW_SHOWNA, SW_SHOWNOACTIVATE, SWP_ASYNCWINDOWPOS, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SetWindowLongPtrW, SetWindowPos, ShowWindow, ShowWindowAsync,
+    WINDOW_EX_STYLE, WINDOW_STYLE, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_OVERLAPPEDWINDOW, WS_POPUP,
+    WS_THICKFRAME,
+};
+use windows::core::{BOOL, HSTRING, PCWSTR};
 
 /// Height of each cell relative to its width.
 const ASPECT: f32 = 0.75;
@@ -42,7 +58,7 @@ unsafe extern "system" fn main_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let mut pid = 0u32;
     unsafe {
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let owned = GetWindow(hwnd, GW_OWNER).is_ok_and(|o| !o.is_invalid());
+        let owned = owner(hwnd).is_some();
         if pid != ctx.pid || owned || !IsWindowVisible(hwnd).as_bool() || GetWindowTextLengthW(hwnd) == 0 {
             return BOOL(1);
         }
@@ -67,59 +83,221 @@ pub fn main_window(pid: u32) -> Option<HWND> {
     ctx.best.map(|(h, _)| h)
 }
 
-/// Width of the invisible resize border on each side, so visible edges meet.
-fn invisible_border(hwnd: HWND) -> RECT {
-    let mut outer = RECT::default();
-    let mut visible = RECT::default();
-    // SAFETY: both RECTs are valid for writes; a stale handle just fails.
-    let ok = unsafe {
-        GetWindowRect(hwnd, &mut outer).is_ok()
-            && DwmGetWindowAttribute(
-                hwnd,
-                DWMWA_EXTENDED_FRAME_BOUNDS,
-                &mut visible as *mut RECT as *mut _,
-                std::mem::size_of::<RECT>() as u32,
-            )
-            .is_ok()
-    };
-    if !ok {
-        return RECT::default();
-    }
-    RECT {
-        left: visible.left - outer.left,
-        top: visible.top - outer.top,
-        right: outer.right - visible.right,
-        bottom: outer.bottom - visible.bottom,
+fn pid_of(hwnd: HWND) -> u32 {
+    let mut pid = 0u32;
+    // SAFETY: pid is valid for writes; a stale handle leaves it 0.
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    pid
+}
+
+/// True while `hwnd` still exists and belongs to `pid`.
+pub fn alive(hwnd: HWND, pid: u32) -> bool {
+    // SAFETY: IsWindow accepts any handle value.
+    let exists = unsafe { IsWindow(Some(hwnd)).as_bool() };
+    exists && pid_of(hwnd) == pid
+}
+
+/// This process's top-level window titled `title`.
+pub fn own_window(title: &str) -> Option<HWND> {
+    // SAFETY: the HSTRING outlives the call.
+    let hwnd = unsafe { FindWindowW(PCWSTR::null(), &HSTRING::from(title)) }.ok()?;
+    // SAFETY: GetCurrentProcessId has no preconditions.
+    (pid_of(hwnd) == unsafe { GetCurrentProcessId() }).then_some(hwnd)
+}
+
+fn owner(hwnd: HWND) -> Option<HWND> {
+    // SAFETY: GetWindow on a stale handle just fails.
+    unsafe { GetWindow(hwnd, GW_OWNER) }.ok().filter(|o| !o.is_invalid())
+}
+
+/// Clears an owner an earlier build of the group bar may have set.
+fn clear_owner(hwnd: HWND) {
+    // SAFETY: GetCurrentProcessId has no preconditions.
+    let me = unsafe { GetCurrentProcessId() };
+    if owner(hwnd).is_some_and(|o| pid_of(o) == me) {
+        // SAFETY: setting GWLP_HWNDPARENT to 0 unowns a top-level window.
+        unsafe { SetWindowLongPtrW(hwnd, GWLP_HWNDPARENT, 0) };
     }
 }
 
-/// Restores and places each window in its cell without taking focus.
-pub fn tile(hwnds: &[HWND], x: i32, y: i32, width: i32) {
-    for (&hwnd, c) in hwnds.iter().zip(grid(hwnds.len(), x, y, width)) {
+thread_local! {
+    /// The shell's taskbar list, made on whichever thread first needs it.
+    static TASKBAR: Option<ITaskbarList> = {
+        // SAFETY: COM is set up once for this thread, and the object is
+        // created and used only here.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            CoCreateInstance::<_, ITaskbarList>(&TaskbarList, None, CLSCTX_INPROC_SERVER)
+                .ok()
+                .filter(|t| t.HrInit().is_ok())
+        }
+    };
+}
+
+/// Marks the window as a tool window while grouped, which drops it from
+/// alt-tab, and removes its taskbar button. The window is never hidden, so
+/// a client that's still loading can't end up invisible.
+pub fn set_grouped(hwnd: HWND, on: bool) {
+    // SAFETY: style calls on a stale handle just fail.
+    unsafe {
+        let ex = WINDOW_EX_STYLE(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32);
+        let new = if on { (ex | WS_EX_TOOLWINDOW) & !WS_EX_APPWINDOW } else { ex & !WS_EX_TOOLWINDOW };
+        if new == ex {
+            return;
+        }
+        crate::applog::debug(format!("group: {:#x} grouped {on}", hwnd.0 as isize));
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, new.0 as isize);
+        TASKBAR.with(|t| {
+            if let Some(t) = t {
+                let _ = if on { t.DeleteTab(hwnd) } else { t.AddTab(hwnd) };
+            }
+        });
+    }
+}
+
+/// Hides the windows while the bar is minimized.
+pub fn hide(hwnds: &[HWND]) {
+    for &hwnd in hwnds {
+        // SAFETY: ShowWindowAsync on a stale handle just fails.
+        unsafe {
+            let _ = ShowWindowAsync(hwnd, SW_HIDE);
+        }
+    }
+}
+
+pub fn show_all(hwnds: &[HWND]) {
+    for &hwnd in hwnds {
+        show(hwnd);
+    }
+}
+
+pub fn square_corners(hwnd: HWND, square: bool) {
+    let pref: DWM_WINDOW_CORNER_PREFERENCE = if square { DWMWCP_DONOTROUND } else { DWMWCP_DEFAULT };
+    // SAFETY: the pointer and size describe `pref`, which outlives the call.
+    // Windows 10 doesn't know the attribute and just fails.
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const pref).cast(),
+            size_of::<DWM_WINDOW_CORNER_PREFERENCE>() as u32,
+        );
+    }
+}
+
+pub fn is_minimized(hwnd: HWND) -> bool {
+    // SAFETY: IsIconic on a stale handle returns false.
+    unsafe { IsIconic(hwnd).as_bool() }
+}
+
+pub fn foreground() -> HWND {
+    // SAFETY: no preconditions.
+    unsafe { GetForegroundWindow() }
+}
+
+/// Stacks `hwnds` right under `top` without activating them, so the group
+/// comes to the front together.
+pub fn raise_under(top: HWND, hwnds: &[HWND]) {
+    for &hwnd in hwnds.iter().filter(|&&h| h != top) {
+        // SAFETY: SetWindowPos on a stale handle just fails.
+        unsafe {
+            let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS;
+            let _ = SetWindowPos(hwnd, Some(top), 0, 0, 0, 0, flags);
+        }
+    }
+}
+
+/// Frame styles removed while grouped so the windows' edges touch.
+const FRAME: WINDOW_STYLE = WINDOW_STYLE(WS_CAPTION.0 | WS_THICKFRAME.0);
+
+/// Swaps the window's frame on or off, keeping its outer rect.
+fn set_frame(hwnd: HWND, on: bool) {
+    // SAFETY: style calls on a stale handle just fail.
+    unsafe {
+        let style = WINDOW_STYLE(GetWindowLongPtrW(hwnd, GWL_STYLE) as u32);
+        let new = if on { (style & !WS_POPUP) | WS_OVERLAPPEDWINDOW } else { style & !FRAME };
+        if new != style {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, new.0 as isize);
+            let flags = SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE;
+            let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, flags);
+        }
+    }
+    square_corners(hwnd, !on);
+}
+
+fn place(hwnd: HWND, c: Cell) {
+    // SAFETY: SetWindowPos on a stale handle just fails.
+    unsafe {
+        let _ = SetWindowPos(hwnd, None, c.x, c.y, c.w, c.h, SWP_NOACTIVATE | SWP_NOZORDER);
+    }
+}
+
+pub fn rect(hwnd: HWND) -> Cell {
+    let mut r = RECT::default();
+    // SAFETY: r is valid for writes; a stale handle just fails.
+    let _ = unsafe { GetWindowRect(hwnd, &mut r) };
+    Cell { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top }
+}
+
+/// Restores, unframes and places each window in its cell without taking
+/// focus. Roblox enforces a minimum size, so cells are then spaced by the
+/// largest real window size. Returns the cells the windows ended up in.
+pub fn tile(hwnds: &[HWND], x: i32, y: i32, width: i32) -> Vec<Cell> {
+    let mut cells = grid(hwnds.len(), x, y, width);
+    for (&hwnd, &c) in hwnds.iter().zip(&cells) {
         // SAFETY: calls on a stale handle just fail.
         unsafe {
             if IsIconic(hwnd).as_bool() {
                 let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             }
-            let b = invisible_border(hwnd);
-            let _ = SetWindowPos(
-                hwnd,
-                None,
-                c.x - b.left,
-                c.y - b.top,
-                c.w + b.left + b.right,
-                c.h + b.top + b.bottom,
-                SWP_NOACTIVATE | SWP_NOZORDER,
-            );
         }
+        set_frame(hwnd, false);
+        place(hwnd, c);
+    }
+    let Some(&first) = cells.first() else { return cells };
+    let (w, h) = hwnds.iter().map(|&h| rect(h)).fold((first.w, first.h), |(w, h), r| (w.max(r.w), h.max(r.h)));
+    if (w, h) != (first.w, first.h) {
+        let cols = columns(hwnds.len());
+        for (i, (&hwnd, c)) in hwnds.iter().zip(&mut cells).enumerate() {
+            *c = Cell { x: x + (i % cols) as i32 * w, y: y + (i / cols) as i32 * h, w, h };
+            place(hwnd, *c);
+        }
+    }
+    cells
+}
+
+/// Width of the grid `tile` returned.
+pub fn grid_width(cells: &[Cell]) -> i32 {
+    let cols = columns(cells.len()) as i32;
+    cells.first().map_or(0, |c| c.w * cols)
+}
+
+/// True when any window has left the cell it was put in, or was minimized.
+pub fn drifted(hwnds: &[HWND], cells: &[Cell]) -> bool {
+    // SAFETY: IsIconic on a stale handle returns false.
+    hwnds.iter().zip(cells).any(|(&h, &c)| rect(h) != c || unsafe { IsIconic(h).as_bool() })
+}
+
+/// Gives the windows back their own taskbar entry, title bar and frame,
+/// where they are.
+pub fn release(hwnds: &[HWND]) {
+    for &hwnd in hwnds {
+        clear_owner(hwnd);
+        set_grouped(hwnd, false);
+        set_frame(hwnd, true);
+        show(hwnd);
     }
 }
 
-pub fn minimize(hwnds: &[HWND]) {
-    for &hwnd in hwnds {
-        // SAFETY: ShowWindow on a stale handle just fails.
-        unsafe {
-            let _ = ShowWindow(hwnd, SW_SHOWMINNOACTIVE);
+/// Shows windows that were minimized or hidden.
+/// Async so a busy client can't stall the UI.
+fn show(hwnd: HWND) {
+    // SAFETY: calls on a stale handle just fail.
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
+        } else if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindowAsync(hwnd, SW_SHOWNA);
         }
     }
 }
@@ -137,5 +315,6 @@ mod tests {
         assert_eq!(cells[0], Cell { x: 10, y: 20, w: 400, h: 300 });
         assert_eq!(cells[1], Cell { x: 410, y: 20, w: 400, h: 300 });
         assert_eq!(cells[2], Cell { x: 10, y: 320, w: 400, h: 300 });
+        assert_eq!(grid_width(&cells), 800);
     }
 }

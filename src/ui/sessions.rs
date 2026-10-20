@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::rows::{self, Col};
+use super::window_group::Group;
 use crate::app::Shared;
 use crate::launcher::LaunchTarget;
 use crate::launcher::watchdog::{self, Session, Status};
@@ -57,15 +58,32 @@ fn is_active(s: &Session) -> bool {
 pub struct State {
     selected: HashSet<u64>,
     anchor: Option<u64>,
+    group: Option<Group>,
 }
 
 impl State {
+    /// Hands the grouped windows back before the app closes, so they don't
+    /// go down with the bar that owns them.
+    pub fn ungroup(&mut self) {
+        self.group = None;
+    }
+
+    /// Runs every frame, whatever tab is open, so the group bar stays up.
+    pub fn show_group(&mut self, ctx: &egui::Context, shared: &Arc<Shared>) {
+        if let Some(g) = &mut self.group
+            && !g.show(ctx, shared)
+        {
+            self.group = None;
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let sessions = shared.sessions.lock().unwrap().clone();
         self.selected.retain(|id| sessions.iter().any(|s| s.id == *id));
         let chosen: Vec<&Session> = sessions.iter().filter(|s| self.selected.contains(&s.id)).collect();
         let can_stop = chosen.iter().any(|s| is_active(s));
         let can_relaunch = chosen.iter().any(|s| !is_active(s));
+        let can_group = chosen.iter().any(|s| s.process.is_some());
 
         let mut stop = false;
         let mut relaunch = false;
@@ -76,6 +94,14 @@ impl State {
                 .on_hover_text("Close the selected clients and don't rejoin")
                 .clicked();
             relaunch |= ui.add_enabled(can_relaunch, egui::Button::new("Relaunch")).clicked();
+            if ui
+                .add_enabled(can_group, egui::Button::new("Group windows"))
+                .on_hover_text("Tile the selected clients under a bar that moves, resizes and minimizes them together")
+                .clicked()
+            {
+                let ids = sessions.iter().filter(|s| self.selected.contains(&s.id)).map(|s| s.id).collect();
+                self.group = Some(Group::new(ids));
+            }
             if ui.button("Clear finished").clicked() {
                 shared.sessions.lock().unwrap().retain(is_active);
             }
