@@ -100,6 +100,8 @@ impl State {
                 ui.add(egui::DragValue::new(&mut cfg.launch_delay_ms).range(0..=60_000).speed(50).suffix(" ms"))
                     .on_hover_text("Only applies when launching several accounts; a single launch starts right away.");
             });
+            ui.checkbox(&mut cfg.wait_for_join, "Wait for each account to join before launching the next")
+                .on_hover_text("Reads the joining client's log. Waits up to 30 s, then launches the next account anyway.");
 
             ui.separator();
             ui.heading("Auto-rejoin");

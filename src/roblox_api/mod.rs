@@ -2,6 +2,7 @@
 
 pub mod auth;
 pub mod find_player;
+pub mod friends;
 pub mod games;
 pub mod presence;
 

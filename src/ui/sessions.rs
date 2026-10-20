@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::rows::{self, Col};
+use super::window_group::Group;
 use crate::app::Shared;
 use crate::launcher::LaunchTarget;
 use crate::launcher::watchdog::{self, Session, Status};
@@ -12,11 +13,19 @@ const ROW_HEIGHT: f32 = 26.0;
 fn status_text(s: &Session) -> String {
     match &s.status {
         Status::Launching => "launching…".to_owned(),
-        Status::Running => "running".to_owned(),
+        Status::Running => match (&s.last_drop, s.in_game, s.left_game) {
+            (_, true, _) => "in game".to_owned(),
+            (_, _, true) => "running (left the game)".to_owned(),
+            (Some(why), _, _) => format!("running ({why})"),
+            _ => "running".to_owned(),
+        },
         Status::NoProcess => "launched (process not detected, not watched)".to_owned(),
         Status::WaitingRetry => {
             let secs = s.next_retry.map(|t| t.saturating_duration_since(Instant::now()).as_secs()).unwrap_or(0);
-            format!("rejoining in {secs} s")
+            match &s.last_drop {
+                Some(why) => format!("{why}, rejoining in {secs} s"),
+                None => format!("rejoining in {secs} s"),
+            }
         }
         Status::GaveUp => "exited (no more retries)".to_owned(),
         Status::Stopped => "stopped".to_owned(),
@@ -32,6 +41,7 @@ fn target_text(s: &Session, shared: &Arc<Shared>) -> String {
     match &s.target {
         LaunchTarget::PrivateServer { .. } => format!("{game} (private server)"),
         LaunchTarget::Job { job_id, .. } => format!("{game} (server {})", short(job_id)),
+        LaunchTarget::Follow { .. } => format!("{game} (following a player)"),
         _ => match &s.job_id {
             Some(job) => format!("{game} (server {})", short(job)),
             None => game,
@@ -48,15 +58,32 @@ fn is_active(s: &Session) -> bool {
 pub struct State {
     selected: HashSet<u64>,
     anchor: Option<u64>,
+    group: Option<Group>,
 }
 
 impl State {
+    /// Hands the grouped windows back before the app closes, so they don't
+    /// go down with the bar that owns them.
+    pub fn ungroup(&mut self) {
+        self.group = None;
+    }
+
+    /// Runs every frame, whatever tab is open, so the group bar stays up.
+    pub fn show_group(&mut self, ctx: &egui::Context, shared: &Arc<Shared>) {
+        if let Some(g) = &mut self.group
+            && !g.show(ctx, shared)
+        {
+            self.group = None;
+        }
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let sessions = shared.sessions.lock().unwrap().clone();
         self.selected.retain(|id| sessions.iter().any(|s| s.id == *id));
         let chosen: Vec<&Session> = sessions.iter().filter(|s| self.selected.contains(&s.id)).collect();
         let can_stop = chosen.iter().any(|s| is_active(s));
         let can_relaunch = chosen.iter().any(|s| !is_active(s));
+        let can_group = chosen.iter().any(|s| s.process.is_some());
 
         let mut stop = false;
         let mut relaunch = false;
@@ -67,6 +94,14 @@ impl State {
                 .on_hover_text("Close the selected clients and don't rejoin")
                 .clicked();
             relaunch |= ui.add_enabled(can_relaunch, egui::Button::new("Relaunch")).clicked();
+            if ui
+                .add_enabled(can_group, egui::Button::new("Group windows"))
+                .on_hover_text("Tile the selected clients under a bar that moves, resizes and minimizes them together")
+                .clicked()
+            {
+                let ids = sessions.iter().filter(|s| self.selected.contains(&s.id)).map(|s| s.id).collect();
+                self.group = Some(Group::new(ids));
+            }
             if ui.button("Clear finished").clicked() {
                 shared.sessions.lock().unwrap().retain(is_active);
             }

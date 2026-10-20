@@ -21,6 +21,9 @@ pub struct Config {
     pub anti_afk: AntiAfkConfig,
     /// Pause between launches when launching several accounts at once.
     pub launch_delay_ms: u64,
+    /// When launching several accounts, start the next one once the previous
+    /// one has joined its game (read from its log), up to `JOIN_WAIT_MAX`.
+    pub wait_for_join: bool,
     /// Last values typed into the launch panel.
     pub last_place_id: String,
     /// Places launched recently, newest first.
@@ -39,6 +42,7 @@ impl Default for Config {
             auto_rejoin: AutoRejoinConfig::default(),
             anti_afk: AntiAfkConfig::default(),
             launch_delay_ms: 500,
+            wait_for_join: true,
             last_place_id: String::new(),
             recent_places: Vec::new(),
             group_order: Vec::new(),

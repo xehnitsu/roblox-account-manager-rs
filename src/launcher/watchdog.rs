@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use uuid::Uuid;
 
+use super::client_log::{self, Drop, Event};
 use super::process::ProcessHandle;
 use super::{LaunchTarget, anti_afk, kill_process, launch, roblox_processes};
 use crate::app::Shared;
@@ -50,14 +51,32 @@ pub struct Session {
     pub last_presence: Option<Instant>,
     pub presence_inflight: bool,
     pub presence_misses: u32,
+    /// The client's own log, once found. While it is, presence isn't polled.
+    pub log: Option<client_log::Reader>,
+    pub next_log_search: Option<Instant>,
+    /// From the log: the client is in a game right now.
+    pub in_game: bool,
+    /// From the log: the player left the game themselves.
+    pub left_game: bool,
+    pub teleport_at: Option<Instant>,
+    /// A disconnect waiting to be confirmed (a teleport also logs one).
+    pub pending_drop: Option<(Instant, Drop)>,
+    pub kick_message: Option<String>,
+    /// Why the client last dropped out of a game, for the Sessions tab.
+    pub last_drop: Option<String>,
 }
+
+/// A disconnect counts once the client hasn't joined a new game this long after it.
+const DROP_GRACE: Duration = Duration::from_secs(8);
 
 impl Session {
     /// Target for the next (re)launch: the same server while retries are
     /// fresh, falling back to the original target if that keeps failing.
     fn relaunch_target(&self) -> LaunchTarget {
         match (&self.target, &self.job_id) {
-            (LaunchTarget::Place { place_id }, Some(job)) if self.retries <= 2 => {
+            (LaunchTarget::Place { place_id } | LaunchTarget::Follow { place_id, .. }, Some(job))
+                if self.retries <= 2 =>
+            {
                 LaunchTarget::Job { place_id: self.job_place_id.unwrap_or(*place_id), job_id: job.clone() }
             }
             _ => self.target.clone(),
@@ -98,6 +117,14 @@ pub fn start_session(shared: &Arc<Shared>, account_id: Uuid, target: LaunchTarge
         last_presence: None,
         presence_inflight: false,
         presence_misses: 0,
+        log: None,
+        next_log_search: None,
+        in_game: false,
+        left_game: false,
+        teleport_at: None,
+        pending_drop: None,
+        kick_message: None,
+        last_drop: None,
     });
     let s = shared.clone();
     shared.rt.spawn(async move { run_launch(s, id).await });
@@ -125,6 +152,13 @@ async fn run_launch(shared: Arc<Shared>, sid: u64) {
                 s.running_since = Some(Instant::now());
                 s.last_presence = None;
                 s.presence_misses = 0;
+                s.log = None;
+                s.next_log_search = None;
+                s.in_game = false;
+                s.left_game = false;
+                s.teleport_at = None;
+                s.pending_drop = None;
+                s.kick_message = None;
             }
             Ok(None) => s.status = Status::NoProcess,
             Err(e) => {
@@ -240,6 +274,8 @@ fn tick(shared: &Arc<Shared>) -> usize {
     let mut relaunch = Vec::new();
     let mut presence_jobs = Vec::new();
     let mut changed = false;
+    let mut to_kill = Vec::new();
+    find_logs(shared, now);
 
     {
         let mut sessions = shared.sessions.lock().unwrap();
@@ -271,7 +307,10 @@ fn tick(shared: &Arc<Shared>) -> usize {
                     if up > Duration::from_secs(300) && s.retries > 0 {
                         s.retries = 0;
                     }
-                    if s.target != LaunchTarget::Home && !s.presence_inflight {
+                    if read_log(s, now, cfg.enabled, &mut to_kill) {
+                        changed = true;
+                    }
+                    if s.target != LaunchTarget::Home && s.log.is_none() && !s.presence_inflight {
                         // First look after 20 s to learn the job ID; then on the configured interval.
                         let every = if s.last_presence.is_none() {
                             Duration::from_secs(20)
@@ -296,6 +335,10 @@ fn tick(shared: &Arc<Shared>) -> usize {
         }
     }
 
+    // Killing makes the next tick see an exit and schedule a rejoin.
+    for pid in to_kill {
+        kill_process(pid);
+    }
     for sid in relaunch {
         let s = shared.clone();
         shared.rt.spawn(async move { run_launch(s, sid).await });
@@ -308,6 +351,102 @@ fn tick(shared: &Arc<Shared>) -> usize {
         shared.ctx.request_repaint();
     }
     alive.len()
+}
+
+/// Looks for the logs of running clients that don't have one yet, at most
+/// every 10 s per client.
+fn find_logs(shared: &Shared, now: Instant) {
+    let (pids, claimed): (Vec<u32>, Vec<std::path::PathBuf>) = {
+        let mut sessions = shared.sessions.lock().unwrap();
+        let claimed = sessions.iter().filter_map(|s| s.log.as_ref().map(|l| l.path.clone())).collect();
+        let pids = sessions
+            .iter_mut()
+            .filter(|s| s.status == Status::Running && s.log.is_none())
+            .filter(|s| s.next_log_search.is_none_or(|t| t <= now))
+            .filter_map(|s| {
+                // A new client writes its log within seconds; look often at first.
+                let young = s.running_since.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(60));
+                s.next_log_search = Some(now + Duration::from_secs(if young { 2 } else { 10 }));
+                s.process.map(|p| p.0)
+            })
+            .collect();
+        (pids, claimed)
+    };
+    if pids.is_empty() {
+        return;
+    }
+    let found = client_log::find_logs(&pids, &claimed);
+    let mut sessions = shared.sessions.lock().unwrap();
+    for s in sessions.iter_mut() {
+        if let Some(path) = s.process.and_then(|p| found.get(&p.0)) {
+            s.log = Some(client_log::Reader::new(path.clone()));
+        }
+    }
+}
+
+/// Applies what the client logged since last time. Queues the client for a
+/// restart when it dropped out of a game and auto-rejoin is on. Returns true
+/// if something the Sessions tab shows changed.
+fn read_log(s: &mut Session, now: Instant, rejoin: bool, to_kill: &mut Vec<u32>) -> bool {
+    let Some(reader) = s.log.as_mut() else { return false };
+    let mut changed = false;
+    for line in reader.read_new() {
+        match client_log::classify(&line) {
+            Some(Event::Joined { place_id, job_id }) => {
+                s.in_game = true;
+                s.left_game = false;
+                s.pending_drop = None;
+                s.kick_message = None;
+                s.job_id = Some(job_id);
+                s.job_place_id = Some(place_id);
+                changed = true;
+            }
+            Some(Event::Teleporting) => s.teleport_at = Some(now),
+            Some(Event::Left) => {
+                s.in_game = false;
+                s.left_game = true;
+                s.pending_drop = None;
+                changed = true;
+            }
+            Some(Event::KickMessage(msg)) => s.kick_message = Some(msg),
+            Some(Event::Disconnected(code)) => {
+                if let Some(drop) = Drop::from_code(code)
+                    && !s.left_game
+                    && s.pending_drop.is_none()
+                {
+                    s.pending_drop = Some((now, drop));
+                }
+            }
+            None => {}
+        }
+    }
+    let Some((at, drop)) = s.pending_drop else { return changed };
+    // A teleport logs a disconnect too, so give it longer to show up in the new game.
+    let teleporting = s.teleport_at.is_some_and(|t| now.saturating_duration_since(t) < DROP_GRACE * 2);
+    let grace = if teleporting { DROP_GRACE * 2 } else { DROP_GRACE };
+    if now.saturating_duration_since(at) < grace {
+        return changed;
+    }
+    s.pending_drop = None;
+    s.in_game = false;
+    let mut reason = drop.describe();
+    if drop == Drop::Kicked
+        && let Some(msg) = &s.kick_message
+    {
+        reason = format!("{reason}: {msg}");
+    }
+    s.last_drop = Some(reason.clone());
+    // A kick comes from the game or a moderator on purpose, so it isn't fought.
+    if rejoin && drop != Drop::Kicked {
+        log(format!("{}: {reason}; restarting client", s.label));
+        if let Some(p) = s.process {
+            to_kill.push(p.0);
+            s.restarting = true;
+        }
+    } else {
+        log(format!("{}: {reason}", s.label));
+    }
+    true
 }
 
 async fn check_presence(shared: Arc<Shared>, sid: u64, account_id: Uuid) {
@@ -371,6 +510,14 @@ mod tests {
             last_presence: None,
             presence_inflight: false,
             presence_misses: 0,
+            log: None,
+            next_log_search: None,
+            in_game: false,
+            left_game: false,
+            teleport_at: None,
+            pending_drop: None,
+            kick_message: None,
+            last_drop: None,
         }
     }
 

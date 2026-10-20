@@ -249,6 +249,8 @@ pub enum Tab {
     Accounts,
     Servers,
     Universe,
+    Friends,
+    Macros,
     Sessions,
     Settings,
 }
@@ -267,6 +269,8 @@ pub struct App {
     add_ui: ui::add_account::State,
     servers_ui: ui::server_browser::State,
     universe_ui: ui::universe::State,
+    friends_ui: ui::friends::State,
+    macros_ui: ui::macros::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
     /// Title bar colours last applied.
@@ -312,12 +316,15 @@ impl App {
         // Take the singleton mutex as early as possible, before any Roblox starts.
         shared.multi.lock().unwrap().apply(&config.multi_instance);
         rt.spawn(crate::launcher::watchdog::run(shared.clone()));
+        crate::macros::recorder::start(cc.egui_ctx.clone());
 
         Self {
             accounts_ui: ui::account_list::State::new(&config),
             add_ui: Default::default(),
             servers_ui: ui::server_browser::State::new(&config),
             universe_ui: ui::universe::State::new(&config),
+            friends_ui: Default::default(),
+            macros_ui: Default::default(),
             sessions_ui: ui::sessions::State::default(),
             settings_ui: Default::default(),
             title_bar: None,
@@ -398,6 +405,7 @@ impl eframe::App for App {
             self.fix_window_size(ui.ctx());
         }
         self.text_menu.show(ui.ctx());
+        self.macros_ui.poll(ui.ctx(), &self.shared, &self.accounts_ui.selected);
         if !matches!(self.lock, Lock::Unlocked) {
             self.unlock_screen(ui);
             return;
@@ -410,6 +418,8 @@ impl eframe::App for App {
                     (Tab::Accounts, "Accounts"),
                     (Tab::Servers, "Server browser"),
                     (Tab::Universe, "Universe"),
+                    (Tab::Friends, "Friends"),
+                    (Tab::Macros, "Macros"),
                     (Tab::Sessions, "Sessions"),
                     (Tab::Settings, "Settings"),
                 ] {
@@ -426,6 +436,9 @@ impl eframe::App for App {
                 ui.strong("Log");
                 if ui.small_button("Clear").clicked() {
                     crate::applog::clear();
+                }
+                if ui.small_button("File").on_hover_text("Open app.log, which keeps more detail").clicked() {
+                    let _ = std::process::Command::new("notepad").arg(crate::applog::path()).spawn();
                 }
             });
             // Only the visible rows are laid out, so a long log costs nothing.
@@ -455,10 +468,18 @@ impl eframe::App for App {
                             self.tab = Tab::Servers;
                         }
                     }
+                    Tab::Friends => self.friends_ui.show(ui, &self.shared, &self.accounts_ui.selected),
+                    Tab::Macros => self.macros_ui.show(ui, &self.shared, &self.accounts_ui.selected),
                     Tab::Sessions => self.sessions_ui.show(ui, &self.shared),
                     _ => self.settings_ui.show(ui, &self.shared),
                 });
             }
+        }
+
+        if ui.input(|i| i.viewport().close_requested()) {
+            self.sessions_ui.ungroup();
+        } else {
+            self.sessions_ui.show_group(ui.ctx(), &self.shared);
         }
 
         if let Some(mode) = self.accounts_ui.request_add.take() {

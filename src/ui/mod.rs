@@ -1,5 +1,7 @@
 pub mod account_list;
 pub mod add_account;
+pub mod friends;
+pub mod macros;
 pub mod rows;
 pub mod server_browser;
 pub mod sessions;
@@ -7,6 +9,7 @@ pub mod settings;
 pub mod text_menu;
 pub mod theme;
 pub mod universe;
+pub mod window_group;
 
 use std::future::Future;
 use std::sync::{Arc, Mutex};
