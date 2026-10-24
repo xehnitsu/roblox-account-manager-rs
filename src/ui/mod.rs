@@ -36,7 +36,6 @@ impl<T: Send + 'static> Pending<T> {
     }
 }
 
-/// Polls an optional pending task and returns its result once.
 pub fn poll<T: Send + 'static>(slot: &mut Option<Pending<T>>) -> Option<T> {
     let v = slot.as_ref()?.take();
     if v.is_some() {

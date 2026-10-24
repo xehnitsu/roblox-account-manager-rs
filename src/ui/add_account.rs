@@ -1,5 +1,3 @@
-//! "Add account" popup, opened from the Accounts toolbar.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -236,7 +234,6 @@ impl State {
             let pass =
                 ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(f32::INFINITY));
             ui.end_row();
-            // Enter in either field logs in.
             enter = (user.lost_focus() || pass.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
         let ready = !self.username.trim().is_empty() && !self.password.is_empty();

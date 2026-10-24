@@ -17,7 +17,6 @@ pub struct Friend {
     pub presence: Presence,
 }
 
-/// The online friends of the account owning `cookie`.
 pub async fn online(cookie: &str, user_id: u64) -> Result<Vec<Friend>> {
     #[derive(Deserialize)]
     struct Item {
@@ -47,7 +46,6 @@ pub async fn online(cookie: &str, user_id: u64) -> Result<Vec<Friend>> {
         .collect())
 }
 
-/// Usernames and display names for user IDs.
 async fn names(ids: &[u64]) -> Result<HashMap<u64, (String, String)>> {
     #[derive(Deserialize)]
     struct User {

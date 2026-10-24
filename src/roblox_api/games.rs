@@ -6,7 +6,6 @@ use super::{check, client, cookie_header, send_with_csrf};
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Server {
-    /// Job ID.
     pub id: String,
     #[serde(rename = "maxPlayers", default)]
     pub max_players: u32,
@@ -167,7 +166,6 @@ pub async fn resolve_share_link(cookie: &str, code: &str) -> Result<(u64, String
     Ok((place_id, link_code))
 }
 
-/// A game in search results.
 #[derive(Debug, Clone)]
 pub struct GameHit {
     pub name: String,
@@ -175,7 +173,6 @@ pub struct GameHit {
     pub players: u64,
 }
 
-/// Searches Roblox games by name, like the website's search bar.
 pub async fn search(query: &str) -> Result<Vec<GameHit>> {
     #[derive(Deserialize)]
     struct Content {

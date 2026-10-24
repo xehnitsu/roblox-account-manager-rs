@@ -40,7 +40,6 @@ pub struct State {
     find_name: String,
     finding: Option<(Pending<anyhow::Result<FindResult>>, Arc<Progress>)>,
     find_status: Option<String>,
-    /// Join the player's server once found.
     join_found: bool,
     error: Option<String>,
 }
@@ -65,7 +64,6 @@ impl State {
         }
     }
 
-    /// Loads a place's servers.
     pub fn load(&mut self, shared: &Shared, place_id: u64) {
         self.place = place_id.to_string();
         self.servers.clear();

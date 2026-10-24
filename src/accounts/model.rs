@@ -18,7 +18,6 @@ pub struct Account {
     #[serde(default)]
     pub avatar_url: Option<String>,
     pub auth_method: AuthMethod,
-    /// `.ROBLOSECURITY` cookie value.
     pub cookie: String,
     /// Username kept for credential accounts so the cookie can be refreshed later.
     #[serde(default)]

@@ -33,7 +33,6 @@ pub struct Shared {
     pub sessions: Mutex<Vec<Session>>,
     pub config: Mutex<Config>,
     pub multi: Mutex<MultiInstance>,
-    /// Accounts whose cookie Roblox rejected (see `check_cookies`).
     pub expired: Mutex<HashSet<Uuid>>,
     /// Game name and icon by place ID; None while loading.
     pub places: Mutex<HashMap<u64, Option<PlaceInfo>>>,
@@ -50,7 +49,6 @@ impl Shared {
         self.sessions.lock().unwrap().iter().find(|s| s.id == id).cloned()
     }
 
-    /// Game name and icon of a place, looked up in the background on first use.
     pub fn place_info(self: &Arc<Self>, place_id: u64) -> Option<PlaceInfo> {
         let mut places = self.places.lock().unwrap();
         if let Some(info) = places.get(&place_id) {
@@ -82,7 +80,6 @@ impl Shared {
         }
     }
 
-    /// PIDs of clients this app launched and is still tracking.
     pub fn claimed_pids(&self) -> HashSet<u32> {
         self.sessions
             .lock()
@@ -231,8 +228,6 @@ pub async fn add_account_from_credentials(shared: &Shared, username: &str, passw
     }
 }
 
-/// Logs in through a WebView2 window (or an external browser without WebView2)
-/// and adds the account.
 pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(String, String)>) -> Result<String> {
     let cookie = if crate::webview::available() {
         crate::webview::login(credentials.clone()).await?
@@ -241,8 +236,6 @@ pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(Strin
     };
     add_account_from_cookie(shared, &cookie, credentials).await
 }
-
-// ----------------------------------------------------------------- the app --
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -273,9 +266,7 @@ pub struct App {
     macros_ui: ui::macros::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
-    /// Title bar colors last applied.
     title_bar: Option<(egui::Color32, egui::Color32)>,
-    /// The window size was checked after startup.
     size_checked: bool,
     text_menu: ui::text_menu::TextMenu,
 }
@@ -469,7 +460,6 @@ impl eframe::App for App {
         });
 
         match self.tab {
-            // The Accounts tab lays out its own side and central panels.
             Tab::Accounts => self.accounts_ui.show(ui, &self.shared),
             tab => {
                 egui::CentralPanel::default().show(ui, |ui| match tab {
@@ -499,7 +489,6 @@ impl eframe::App for App {
         }
         self.add_ui.show(ui.ctx(), &self.shared);
 
-        // Ctrl +/- also zoom. Save the result.
         let zoom = ui.ctx().zoom_factor();
         let changed = {
             let mut cfg = self.shared.config.lock().unwrap();

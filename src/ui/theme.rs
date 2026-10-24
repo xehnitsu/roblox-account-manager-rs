@@ -13,7 +13,6 @@ const fn hex(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-/// Colors for one classic variant.
 struct Palette {
     dark: bool,
     page: Color32,
@@ -206,7 +205,6 @@ fn classic_visuals(p: &Palette) -> Visuals {
     v
 }
 
-/// Frame for the tab bar (the classic navigation bar).
 pub fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
     let frame = egui::Frame::side_top_panel(&ctx.global_style());
     match palette(current(ctx)) {
@@ -215,7 +213,6 @@ pub fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
     }
 }
 
-/// Recolors tab buttons for the classic navigation bar. Call inside the bar.
 pub fn style_tab_bar(ui: &mut egui::Ui) {
     let Some(p) = palette(current(ui.ctx())) else { return };
     let v = ui.visuals_mut();
@@ -236,7 +233,6 @@ pub fn style_tab_bar(ui: &mut egui::Ui) {
     }
 }
 
-/// Title bar caption and text colors for the current theme.
 pub fn title_bar_colors(ctx: &egui::Context) -> (Color32, Color32) {
     match palette(current(ctx)) {
         Some(p) => (p.nav, Color32::WHITE),
@@ -247,7 +243,6 @@ pub fn title_bar_colors(ctx: &egui::Context) -> (Color32, Color32) {
     }
 }
 
-/// Launch button color, green like the old site's Play button in classic themes.
 pub fn play_button(ctx: &egui::Context, text: String) -> egui::Button<'static> {
     match palette(current(ctx)) {
         None => egui::Button::new(text),
@@ -261,7 +256,6 @@ pub fn row_hover(ui: &egui::Ui) -> Color32 {
     palette(current(ui.ctx())).map_or(ui.visuals().widgets.hovered.weak_bg_fill, |p| p.row_hover)
 }
 
-/// Drop marker color when dragging accounts.
 pub fn drag_line(ui: &egui::Ui) -> Color32 {
     palette(current(ui.ctx())).map_or(Color32::from_gray(70), |p| p.drag_line)
 }

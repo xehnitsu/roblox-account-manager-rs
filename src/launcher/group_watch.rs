@@ -1,7 +1,4 @@
-//! Freeze watchdog for a window group. A background thread checks that the
-//! UI thread keeps running and that the bar and each client answer messages.
-//! When something stalls it logs who holds mouse capture, focus and menu or
-//! move mode, which is what usually explains a freeze.
+//! Freeze watchdog for a window group: logs who holds capture, focus and move mode when the UI thread or a client stalls.
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,12 +25,10 @@ fn start_time() -> Instant {
 /// Milliseconds since start when the UI thread last ran a frame.
 static HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
-/// Called once per UI frame.
 pub fn beat() {
     HEARTBEAT.store(start_time().elapsed().as_millis() as u64, Ordering::Relaxed);
 }
 
-/// Window handles are kept as isize so they can cross threads.
 type Targets = Vec<(String, isize)>;
 
 pub struct Watch {
@@ -51,7 +46,6 @@ impl Watch {
         Self { stop, targets }
     }
 
-    /// The windows to check, with a name for the log.
     pub fn set_targets(&self, targets: Vec<(String, HWND)>) {
         *self.targets.lock().unwrap() = targets.into_iter().map(|(n, h)| (n, h.0 as isize)).collect();
     }
@@ -127,7 +121,6 @@ fn flag_names(info: &GUITHREADINFO) -> String {
     if set.is_empty() { "none".into() } else { set.join(", ") }
 }
 
-/// Logs input state for each target's thread and the foreground window.
 fn dump(targets: &Mutex<Targets>) {
     let mut list = targets.lock().unwrap().clone();
     // SAFETY: no preconditions.

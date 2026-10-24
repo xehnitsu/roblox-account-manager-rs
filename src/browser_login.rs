@@ -1,10 +1,8 @@
-//! Log in through a real browser window.
-//!
-//! Roblox often answers API logins with a captcha. Instead of solving it, this
-//! opens Helium/Chrome/Edge/Brave with a throwaway profile on the Roblox login page,
-//! optionally types in the username and password, and lets the user press
-//! "Log in" and finish the login (captcha, 2-step verification) themselves. The `.ROBLOSECURITY` cookie
-//! is then read over the Chrome DevTools Protocol and the browser is closed.
+//! Log in through a real browser window, for when Roblox answers API logins with a captcha.
+
+//! The user finishes the login themselves, then the `.ROBLOSECURITY` cookie is read over
+
+//! the Chrome DevTools Protocol and the browser is closed.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
@@ -21,12 +19,9 @@ use crate::applog::log;
 
 const LOGIN_URL: &str = "https://www.roblox.com/login";
 const HOME_URL: &str = "https://www.roblox.com/home";
-/// Profiles of "open in browser" windows, kept until the window closes.
 const SESSION_PREFIX: &str = "ramrs-browser-";
 const TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-/// Installed Chromium-based browser, preferring Helium, then Chrome, Edge and
-/// Brave.
 pub fn find_browser() -> Option<PathBuf> {
     let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
     let roots = [env("LOCALAPPDATA"), env("ProgramFiles"), env("ProgramFiles(x86)")];
@@ -39,8 +34,6 @@ pub fn find_browser() -> Option<PathBuf> {
     rels.iter().flat_map(|rel| roots.iter().flatten().map(move |root| root.join(rel))).find(|p| p.is_file())
 }
 
-/// Opens a browser window on the Roblox login page and waits until the user is
-/// logged in. Returns the `.ROBLOSECURITY` cookie.
 pub async fn login(credentials: Option<(String, String)>) -> Result<String> {
     let exe = find_browser().ok_or_else(|| anyhow!("no Helium, Chrome, Edge or Brave installation found"))?;
     remove_stale_profiles();
@@ -56,7 +49,6 @@ pub async fn login(credentials: Option<(String, String)>) -> Result<String> {
     result
 }
 
-/// Starts the browser on a throwaway profile with DevTools on a random local port.
 fn spawn(exe: &Path, profile: &Path, args: &[&str]) -> Result<Child> {
     Command::new(exe)
         .arg(format!("--user-data-dir={}", profile.display()))
@@ -161,7 +153,6 @@ async fn roblosecurity(cdp: &mut Cdp) -> Result<Option<String>> {
         .map(str::to_owned))
 }
 
-/// Open tabs as (target id, url).
 async fn pages(cdp: &mut Cdp) -> Result<Vec<(String, String)>> {
     let targets = cdp.call("Target.getTargets", json!({}), None).await?;
     Ok(targets["targetInfos"]
@@ -252,8 +243,6 @@ struct Browser {
 }
 
 impl Browser {
-    /// The browser writes its DevTools port and path to `DevToolsActivePort`
-    /// in the profile directory once it is listening.
     async fn devtools_url(&self) -> Result<String> {
         let file = self.profile.join("DevToolsActivePort");
         let started = Instant::now();

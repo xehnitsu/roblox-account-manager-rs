@@ -44,7 +44,6 @@ struct Recording {
     last_move: u32,
 }
 
-/// Starts the hotkey and recording thread. Call once.
 pub fn start(ctx: egui::Context) {
     let _ = CTX.set(ctx);
     std::thread::spawn(|| {
@@ -85,7 +84,6 @@ pub fn start(ctx: egui::Context) {
     });
 }
 
-/// Hotkeys pressed since the last call.
 pub fn take_hotkeys() -> u8 {
     HOTKEYS.swap(0, Ordering::Relaxed)
 }
@@ -138,7 +136,6 @@ fn push(kind: Kind) {
     }
 }
 
-/// The foreground window, unless it belongs to this app.
 pub(super) fn target_window() -> Option<HWND> {
     // SAFETY: read-only window queries.
     unsafe {
@@ -149,7 +146,6 @@ pub(super) fn target_window() -> Option<HWND> {
     }
 }
 
-/// Screen point as a fraction of the window's client area.
 pub(super) fn to_fraction(hwnd: HWND, pt: POINT) -> (f32, f32) {
     let mut p = pt;
     let mut rect = RECT::default();

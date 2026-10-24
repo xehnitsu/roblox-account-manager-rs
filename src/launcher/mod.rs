@@ -69,7 +69,6 @@ impl LaunchTarget {
     }
 }
 
-/// What the user typed in the launch panel, before resolving share links.
 #[derive(Debug, Clone)]
 pub enum TargetInput {
     Home,
@@ -114,8 +113,6 @@ pub fn parse_private_link(input: &str) -> Result<PrivateLink> {
     bail!("link has neither privateServerLinkCode nor a share code")
 }
 
-/// Reads the launch panel's two fields: the first holds a place ID, game URL
-/// or private server link. The optional second is a job ID.
 pub fn game_input(place_or_link: &str, job_id: &str) -> Result<TargetInput> {
     let (first, job_id) = (place_or_link.trim(), job_id.trim());
     if first.is_empty() {
@@ -155,7 +152,6 @@ pub async fn resolve_target(cookie: &str, input: &TargetInput) -> Result<LaunchT
     })
 }
 
-/// The join URL the client requests a server from. None for Home.
 fn placelauncher_url(target: &LaunchTarget, tracker_id: u64) -> Option<String> {
     if let LaunchTarget::Follow { user_id, .. } = target {
         return Some(format!(
@@ -174,7 +170,6 @@ fn placelauncher_url(target: &LaunchTarget, tracker_id: u64) -> Option<String> {
     Some(url)
 }
 
-/// Builds the `roblox-player:` URI the website's Play button uses.
 pub fn build_launch_uri(ticket: &str, target: &LaunchTarget, launch_time_ms: u128, tracker_id: u64) -> String {
     let tail = format!("+browsertrackerid:{tracker_id}+robloxLocale:en_us+gameLocale:en_us");
     let Some(placelauncher) = placelauncher_url(target, tracker_id) else {
@@ -209,7 +204,6 @@ pub fn kill_process(pid: u32) -> bool {
 /// Holds when the last client appeared and its PID, to space out queued launches.
 static LAUNCH_LOCK: tokio::sync::Mutex<Option<(Instant, u32)>> = tokio::sync::Mutex::const_new(None);
 
-/// Longest wait for the previous account to join before launching the next.
 const JOIN_WAIT_MAX: Duration = Duration::from_secs(30);
 
 /// Waits until the client `pid` has joined a game (per its log), has stopped
@@ -338,7 +332,6 @@ async fn spawn_player(exe: &Path, args: Vec<String>) -> Option<(u32, u64)> {
     None
 }
 
-/// Opens the `roblox-player:` link and waits for the new client process.
 async fn launch_via_link(shared: &crate::app::Shared, uri: &str) -> Result<Option<(u32, u64)>> {
     let before = roblox_processes();
     open::that_detached(uri).context("no handler for roblox-player: (is Roblox installed?)")?;

@@ -28,15 +28,12 @@ use super::window_group::{self as wg, Cell, grid, rect};
 use crate::applog::debug;
 
 const SUBCLASS_ID: usize = 0x6772_6f75; // "grou"
-/// Width the cached grid picture is scaled down to.
 const SNAPSHOT_WIDTH: i32 = 960;
 
 /// Window handles are stored as isize so the state can live in a static.
 struct State {
     members: Vec<isize>,
-    /// Each window's cell relative to the bar's bottom-left corner.
     offsets: Vec<Cell>,
-    /// Bar width the offsets were made for.
     width: i32,
     snapshot: Option<Snapshot>,
     bar: isize,
@@ -44,7 +41,6 @@ struct State {
     preview_size: (i32, i32),
 }
 
-/// Top-down BGRA pixels.
 struct Snapshot {
     w: i32,
     h: i32,
@@ -52,7 +48,6 @@ struct Snapshot {
 }
 
 impl Snapshot {
-    /// Average of all color channels, 0 to 255.
     fn brightness(&self) -> u64 {
         let px = self.pixels.as_chunks::<4>().0;
         let sum: u64 = px.iter().map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum();
@@ -81,7 +76,6 @@ impl Snapshot {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
-/// True while the user drags the bar.
 static MOVING: AtomicBool = AtomicBool::new(false);
 static MINIMIZED: AtomicBool = AtomicBool::new(false);
 
@@ -137,7 +131,6 @@ pub fn uninstall(bar: HWND) {
     *STATE.lock().unwrap() = None;
 }
 
-/// Records where the windows were tiled, relative to the bar.
 pub fn update(members: &[HWND], cells: &[Cell], bar: Cell) {
     if let Some(s) = STATE.lock().unwrap().as_mut() {
         s.members = members.iter().map(|h| h.0 as isize).collect();
@@ -235,7 +228,6 @@ fn notable(msg: u32) -> Option<&'static str> {
     })
 }
 
-/// Moves the windows along with the bar, whose bottom-left is now (`x`, `y`).
 fn follow(x: i32, y: i32, width: i32) {
     let moves: Moves = {
         let Ok(st) = STATE.try_lock() else { return };
@@ -252,7 +244,6 @@ fn follow(x: i32, y: i32, width: i32) {
     group_worker::post_moves(moves);
 }
 
-/// A 32-bit top-down DIB selected into a new memory DC.
 struct Dib {
     dc: HDC,
     bmp: HBITMAP,
@@ -365,7 +356,6 @@ fn send_thumbnail(bar: HWND, max_w: i32, max_h: i32) {
     debug(format!("group: alt-tab asked for {max_w}x{max_h} (brightness {}), {result:?}", snap.brightness()));
 }
 
-/// Scales the picture to fit and gives it to DWM as the bar's preview.
 fn push(bar: HWND, snap: &Snapshot, max_w: i32, max_h: i32) -> windows::core::Result<()> {
     let fail = windows::core::Error::from_thread;
     let mut src = Dib::new(snap.w, snap.h).ok_or_else(fail)?;

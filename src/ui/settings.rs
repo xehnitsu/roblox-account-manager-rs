@@ -20,7 +20,6 @@ pub struct State {
     picking_export: bool,
     transfer_pw: String,
     transfer_pw2: String,
-    /// Import accounts only, keeping this PC's settings.
     keep_settings: bool,
     transfer_msg: Option<Result<String, String>>,
 }
@@ -312,7 +311,6 @@ impl State {
     }
 }
 
-/// Save (export) or open (import) dialog, starting in Downloads.
 fn pick_file(shared: &Shared, export: bool) -> Pending<Option<PathBuf>> {
     Pending::spawn(shared, async move {
         tokio::task::spawn_blocking(move || {

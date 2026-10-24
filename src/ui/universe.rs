@@ -15,7 +15,6 @@ use crate::launcher::{LaunchTarget, watchdog};
 use crate::roblox_api::games::{self, GameHit};
 
 enum Loaded {
-    /// Game name and its `(id, name)` places.
     Places(Option<String>, Vec<(u64, String)>),
     Search(Vec<GameHit>),
 }
@@ -28,7 +27,6 @@ pub struct State {
     places: Vec<(u64, String)>,
     selected: Option<u64>,
     results: Vec<GameHit>,
-    /// Showing search results instead of a game's places.
     show_results: bool,
     task: Option<Pending<anyhow::Result<Loaded>>>,
     error: Option<String>,
@@ -48,7 +46,6 @@ impl State {
         }
     }
 
-    /// Returns a place whose servers should be shown.
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) -> Option<u64> {
         if let Some(r) = poll(&mut self.task) {
             match r {
@@ -189,7 +186,6 @@ impl State {
         }));
     }
 
-    /// Search results.
     fn results_list(&mut self, ui: &mut egui::Ui, shared: &Shared) {
         if self.results.is_empty() {
             ui.weak("No games found.");

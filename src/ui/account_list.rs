@@ -17,7 +17,6 @@ use crate::launcher::{TargetInput, game_input, input_place_id, resolve_target, w
 
 pub struct State {
     pub selected: HashSet<Uuid>,
-    /// Set when an entry is picked from the "Add account" menu.
     pub request_add: Option<AddMode>,
     filter: String,
     place: String,
@@ -40,7 +39,6 @@ pub struct State {
 
 const ROW_HEIGHT: f32 = 36.0;
 
-/// One visible row, copied out so no lock is held while drawing.
 struct Row {
     id: Uuid,
     label: String,
@@ -50,7 +48,6 @@ struct Row {
     notes: String,
 }
 
-/// Moves `moving` in front of `before` (or to the end), keeping their order.
 pub fn reorder(items: &mut Vec<Account>, moving: &HashSet<Uuid>, before: Option<Uuid>) {
     let (moved, mut rest): (Vec<Account>, Vec<Account>) = items.drain(..).partition(|a| moving.contains(&a.id));
     let at = before.and_then(|b| rest.iter().position(|a| a.id == b)).unwrap_or(rest.len());
@@ -70,7 +67,6 @@ pub fn group_order(saved: &[String], accounts: &[Account]) -> Vec<String> {
     order
 }
 
-/// Accounts by group priority, keeping the saved order within a group.
 pub fn sorted<'a>(accounts: &'a [Account], saved_order: &[String]) -> Vec<&'a Account> {
     let order = group_order(saved_order, accounts);
     let rank = |g: &str| order.iter().position(|o| o == g).unwrap_or(usize::MAX);
@@ -242,7 +238,6 @@ impl State {
         self.game_history(ui, shared);
     }
 
-    /// Recent games. Clicking one fills the place field.
     fn game_history(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let recent = shared.config.lock().unwrap().recent_places.clone();
         if recent.is_empty() {
@@ -304,7 +299,6 @@ impl State {
         }
     }
 
-    /// Game icon and name for the place field.
     fn game_card(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let place_id = input_place_id(&self.place);
         if self.typed.0 != place_id {
@@ -365,12 +359,10 @@ impl State {
         }
     }
 
-    /// Launches the selected accounts into the place field's game, or the Roblox home.
     fn launch(&mut self, shared: &Arc<Shared>, home: bool) {
         self.error = None;
         shared.config.lock().unwrap().last_place_id = self.place.clone();
         shared.save_config();
-        // Launch top to bottom.
         let ids = self.selected_in_order(shared);
         let input = if home { Ok(TargetInput::Home) } else { game_input(&self.place, &self.job_id) };
         let input = match input {
@@ -395,7 +387,6 @@ impl State {
         }));
     }
 
-    /// Opens a logged-in browser window for each selected account.
     fn open_in_browser(&mut self, shared: &Arc<Shared>) {
         self.error = None;
         let accounts: Vec<(String, String)> = self
@@ -418,14 +409,12 @@ impl State {
         }));
     }
 
-    /// Selected accounts in list order.
     fn selected_in_order(&self, shared: &Shared) -> Vec<Uuid> {
         let saved_order = shared.config.lock().unwrap().group_order.clone();
         let accounts = shared.accounts.lock().unwrap();
         sorted(&accounts, &saved_order).into_iter().filter(|a| self.selected.contains(&a.id)).map(|a| a.id).collect()
     }
 
-    /// Prefetches tickets for the first few selected accounts.
     fn prefetch_tickets(&self, shared: &Arc<Shared>) {
         let cookies: Vec<String> = shared
             .accounts
@@ -660,7 +649,6 @@ impl State {
         });
     }
 
-    /// Draws the drop marker and moves the rows on release.
     fn drag_rows(&mut self, ui: &mut egui::Ui, shared: &Shared, rows: &[Row], rects: &[egui::Rect]) {
         let Some(moving) = &self.dragging else { return };
         let released = ui.input(|i| i.pointer.any_released());
@@ -699,7 +687,6 @@ impl State {
     }
 }
 
-/// Groups with buttons to change their priority.
 fn group_order_menu(ui: &mut egui::Ui, shared: &Shared) {
     let saved_order = shared.config.lock().unwrap().group_order.clone();
     let mut order = group_order(&saved_order, &shared.accounts.lock().unwrap());

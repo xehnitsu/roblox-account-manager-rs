@@ -26,7 +26,6 @@ pub async fn cookie_valid(cookie: &str) -> Result<bool> {
 
 const EXPIRED: &str = "cookie is invalid or expired";
 
-/// Validates a cookie and returns the account it belongs to.
 pub async fn authenticated_user(cookie: &str) -> Result<UserInfo> {
     let resp = client()
         .get("https://users.roblox.com/v1/users/authenticated")
@@ -73,8 +72,6 @@ pub async fn avatar_headshot(user_id: u64) -> Result<Option<String>> {
 static PREFETCHED: std::sync::Mutex<Vec<(String, std::time::Instant, String)>> = std::sync::Mutex::new(Vec::new());
 const PREFETCH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// Fetches a ticket ahead of time, e.g. while the pointer is on the Launch
-/// button, so the launch itself doesn't wait for it.
 pub async fn prefetch_ticket(cookie: String) {
     let fresh = |list: &Vec<(String, std::time::Instant, String)>| {
         list.iter().any(|(c, at, _)| *c == cookie && at.elapsed() < PREFETCH_MAX_AGE / 2)

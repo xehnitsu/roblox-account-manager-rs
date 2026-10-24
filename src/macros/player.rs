@@ -60,14 +60,11 @@ impl Playback {
         self.done.load(Ordering::Relaxed)
     }
 
-    /// Which repeat is playing, from 1.
     pub fn run(&self) -> u32 {
         self.run.load(Ordering::Relaxed)
     }
 }
 
-/// Starts playing `m`. `EachWindow` mode cycles through the windows of `pids`.
-/// `pids` is unused in `Screen` mode.
 pub fn play(m: Macro, opts: Options, pids: HashSet<u32>, ctx: egui::Context) -> Playback {
     let stop = Arc::new(AtomicBool::new(false));
     let done = Arc::new(AtomicBool::new(false));
@@ -171,8 +168,6 @@ fn with_focus(hwnd: HWND, f: impl FnOnce() -> bool) -> bool {
     }
 }
 
-/// Keys and buttons currently held down, so they can be released if playback
-/// stops or the window switches midway.
 #[derive(Default)]
 struct Held {
     keys: HashSet<(u16, u16, bool)>,
@@ -259,7 +254,6 @@ fn send(mut kind: Kind) {
     }
 }
 
-/// Mouse input at a fraction of the foreground window's client area.
 fn mouse(x: f32, y: f32, flags: MOUSE_EVENT_FLAGS, data: i32) -> INPUT {
     // SAFETY: read-only window and screen queries.
     let (dx, dy) = unsafe {

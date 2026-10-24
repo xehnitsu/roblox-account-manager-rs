@@ -18,7 +18,6 @@ pub struct TextMenu {
 }
 
 impl TextMenu {
-    /// Call once per frame before drawing widgets.
     pub fn show(&mut self, ctx: &Context) {
         if let Some((id, range)) = self.restore.take()
             && let Some(mut state) = TextEditState::load(ctx, id)
@@ -81,7 +80,6 @@ impl TextMenu {
     }
 }
 
-/// Text field under `pos` on the last frame.
 fn text_field_at(ctx: &Context, pos: Pos2) -> Option<Id> {
     let top = ctx.layer_id_at(pos)?;
     let ids: Vec<Id> = ctx.viewport(|v| {

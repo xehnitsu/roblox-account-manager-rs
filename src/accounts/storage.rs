@@ -3,8 +3,6 @@
 //! Layout: `MAGIC (6 bytes) || mode (1 byte) || payload`
 //! - mode 0: payload is a DPAPI blob
 //! - mode 1: payload is `salt || nonce || AES-256-GCM ciphertext`
-//!
-//! The decrypted payload is JSON (`Vec<Account>`).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -32,7 +30,6 @@ pub fn accounts_path() -> PathBuf {
     crate::config::data_dir().join("accounts.dat")
 }
 
-/// Whether the file on disk needs a password to open. `None` if no file exists yet.
 pub fn stored_mode(path: &Path) -> Result<Option<bool>> {
     if !path.exists() {
         return Ok(None);

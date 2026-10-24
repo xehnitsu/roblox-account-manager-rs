@@ -49,7 +49,6 @@ fn target_text(s: &Session, shared: &Arc<Shared>) -> String {
     }
 }
 
-/// Running or about to run, so it can be stopped.
 fn is_active(s: &Session) -> bool {
     matches!(s.status, Status::Launching | Status::Running | Status::WaitingRetry | Status::NoProcess)
 }

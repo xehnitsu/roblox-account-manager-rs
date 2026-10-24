@@ -1,5 +1,4 @@
-//! Tiny in-memory log shown in the UI's bottom panel (also echoed to stderr),
-//! plus `app.log` in the data folder so a freeze or crash leaves a trace.
+//! In-memory log for the bottom panel, also written to `app.log` in the data folder.
 
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
@@ -8,7 +7,6 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 const MAX_LINES: usize = 500;
-/// The file starts over once it grows past this.
 const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
 
 static LINES: Mutex<VecDeque<String>> = Mutex::new(VecDeque::new());

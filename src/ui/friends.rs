@@ -20,11 +20,9 @@ const ACCOUNT_PAUSE: Duration = Duration::from_millis(800);
 
 struct Row {
     friend: Friend,
-    /// Accounts this is a friend of.
     of: Vec<String>,
 }
 
-/// Friends found, and accounts whose list failed to load.
 type LoadResult = (Vec<Row>, Vec<String>);
 
 #[derive(Default)]

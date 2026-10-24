@@ -30,7 +30,6 @@ pub async fn presence(cookie: &str, user_id: u64) -> Result<Presence> {
     all.into_iter().next().map(|(_, p)| p).ok_or_else(|| anyhow!("no presence data"))
 }
 
-/// Presence of up to 50 users as seen by the account owning `cookie`.
 pub async fn presences(cookie: &str, user_ids: &[u64]) -> Result<Vec<(u64, Presence)>> {
     #[derive(Deserialize)]
     struct Item {

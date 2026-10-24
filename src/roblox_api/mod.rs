@@ -76,7 +76,6 @@ pub async fn send_with_csrf_cached(key: Option<&str>, build: impl Fn() -> Reques
     bail!("Roblox kept rate-limiting or rejecting the CSRF token, try again shortly")
 }
 
-/// Turns a non-2xx response into an error that includes Roblox's message.
 pub async fn check(resp: Response) -> Result<Response> {
     if resp.status().is_success() {
         return Ok(resp);

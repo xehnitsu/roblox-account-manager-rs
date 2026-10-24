@@ -1,8 +1,5 @@
-//! Group handle: a thin frameless bar above the tiled client windows. Clients
-//! become tool windows, so alt-tab and the taskbar list only the bar, and they
-//! hide, show and raise with it. Dragging the bar with the left button moves
-//! the grid. The grid re-tiles when a client joins, leaves or is resized.
-//!
+//! Group handle: a thin frameless bar above the tiled client windows. Clients become tool
+//! windows, so alt-tab and the taskbar list only the bar, and they hide, show and raise with it.
 //! Syncing runs from the main window's frame because egui doesn't run a
 //! minimized viewport's UI. Dragging and the alt-tab picture are handled by a
 //! hook on the bar's window, see `launcher::group_bar`.
@@ -55,7 +52,6 @@ pub struct Group {
     /// Where `tile` last put each window.
     cells: Vec<Cell>,
     force: bool,
-    /// A Tile task is queued and hasn't returned yet.
     tiling: bool,
     bar_was_min: bool,
     /// Bar size to restore after the one-pixel repaint nudge.
@@ -67,7 +63,6 @@ pub struct Group {
 }
 
 impl Group {
-    /// `ids` are session ids in tile order.
     pub fn new(ids: Vec<u64>) -> Self {
         let start_cols = columns(ids.len()) as f32;
         log(format!("Client group: grouping {} sessions", ids.len()));

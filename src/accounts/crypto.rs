@@ -1,8 +1,4 @@
-//! Encryption primitives.
-//!
-//! Two modes:
-//! - DPAPI (default): bound to the current Windows user on this machine.
-//! - Password: AES-256-GCM with an Argon2id-derived key.
+//! DPAPI (default) and password-based AES-256-GCM with an Argon2id key.
 
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -90,7 +86,6 @@ pub fn dpapi_decrypt(blob: &[u8]) -> Result<Vec<u8>> {
     }
 }
 
-/// Copies a DPAPI-allocated blob into a Vec and frees the original.
 unsafe fn take_blob(blob: windows::Win32::Security::Cryptography::CRYPT_INTEGER_BLOB) -> Vec<u8> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
     if blob.pbData.is_null() {

@@ -1,6 +1,3 @@
-//! Task Manager style lists (painted header, full-width rows) shared by the
-//! accounts, sessions and servers tabs.
-
 use std::collections::HashSet;
 use std::hash::Hash;
 
@@ -33,7 +30,6 @@ pub fn spans(rect: egui::Rect, cols: &[Col]) -> Vec<(f32, f32)> {
 
 const PAD: egui::Vec2 = egui::vec2(6.0, 3.0);
 
-/// Column titles with a separator below.
 pub fn header(ui: &mut egui::Ui, cols: &[Col], titles: &[&str]) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 22.0), egui::Sense::hover());
     let font = egui::TextStyle::Body.resolve(ui.style());
@@ -68,12 +64,10 @@ pub fn row(
     (rect.shrink2(PAD), resp)
 }
 
-/// Text color for a row's cells.
 pub fn text_color(ui: &egui::Ui, selected: bool) -> egui::Color32 {
     if selected { ui.visuals().selection.stroke.color } else { ui.visuals().text_color() }
 }
 
-/// Non-selectable, truncated label in `left..right`.
 pub fn cell(ui: &mut egui::Ui, inner: egui::Rect, (left, right): (f32, f32), text: egui::RichText) {
     let cell = egui::Rect::from_x_y_ranges(left..=(right - 8.0).max(left), inner.y_range());
     let layout = egui::Layout::left_to_right(egui::Align::Center);

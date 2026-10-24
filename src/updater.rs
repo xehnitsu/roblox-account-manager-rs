@@ -28,7 +28,6 @@ pub enum Status {
     Checking,
     UpToDate,
     Downloading(String),
-    /// The new exe is in place. Restart to run it.
     Ready(String),
     Failed(String),
 }
@@ -73,7 +72,6 @@ fn client() -> &'static Client {
     })
 }
 
-/// "v1.2.3" or "1.2.3" as numbers.
 fn parse_version(v: &str) -> Option<(u64, u64, u64)> {
     let mut parts = v.trim().trim_start_matches('v').split('.').map(|p| p.parse().ok());
     let v = (parts.next()??, parts.next()??, parts.next()??);
@@ -88,7 +86,6 @@ fn old_path(exe: &Path) -> PathBuf {
     exe.with_extension("exe.old")
 }
 
-/// Deletes the exe an earlier update moved aside. Call at startup.
 pub fn remove_old() {
     let Ok(exe) = std::env::current_exe() else { return };
     let old = old_path(&exe);
@@ -176,7 +173,6 @@ fn swap_in(exe: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-/// Starts the updated exe, which waits for this process to exit.
 pub fn restart() -> Result<()> {
     let exe = std::env::current_exe()?;
     std::process::Command::new(exe).args([WAIT_FLAG, &std::process::id().to_string()]).spawn()?;

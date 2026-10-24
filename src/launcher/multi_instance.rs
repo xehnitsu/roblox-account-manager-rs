@@ -1,12 +1,6 @@
-//! Multi-instance support, based on evanovar/RobloxAccountManager:
-//!
-//! 1. Hold the Roblox singleton mutexes (`ROBLOX_singletonEvent` and friends)
-//!    so each new client fails to claim them and runs anyway.
-//! 2. Optional handle64 monitor: every ~400 ms, find `RobloxPlayerBeta.exe`
-//!    processes and force-close their singleton handles with Sysinternals
-//!    `handle64.exe` (requires admin).
-//! 3. Error 773 fix: hold a non-blocking exclusive lock on `RobloxCookies.dat`
-//!    so simultaneous clients don't overwrite each other's cookie state.
+//! Multi-instance support, based on evanovar/RobloxAccountManager. Holds the singleton mutexes,
+//! optionally closes leftover handles with Sysinternals handle64 (needs admin),
+//! and locks `RobloxCookies.dat` to avoid error 773.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
@@ -27,12 +21,9 @@ use windows::core::HSTRING;
 use crate::applog::log;
 use crate::launcher::roblox_processes;
 
-/// Names Roblox has used for its single-instance object across versions.
 pub const SINGLETON_NAMES: [&str; 3] = ["ROBLOX_singletonEvent", "ROBLOX_SingletonEvent", "ROBLOX_singletonMutex"];
 
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
-// ---------------------------------------------------------------- mutexes --
 
 pub struct SingletonGuard {
     handles: Vec<HANDLE>,
@@ -80,8 +71,6 @@ impl Drop for SingletonGuard {
     }
 }
 
-// ------------------------------------------------------- error 773 lock --
-
 pub struct CookieLock {
     _file: File,
     pub path: PathBuf,
@@ -101,7 +90,6 @@ pub fn cookie_file_candidates() -> Vec<PathBuf> {
 }
 
 impl CookieLock {
-    /// Non-blocking exclusive lock on the first `RobloxCookies.dat` found.
     pub fn acquire() -> Result<Self> {
         let path = cookie_file_candidates()
             .into_iter()
@@ -117,14 +105,11 @@ impl CookieLock {
     }
 }
 
-// ------------------------------------------------------- handle64 monitor --
-
 pub fn is_admin() -> bool {
     // SAFETY: no arguments, no side effects.
     unsafe { windows::Win32::UI::Shell::IsUserAnAdmin().as_bool() }
 }
 
-/// Looks for `handle64.exe` in `<exe dir>\utils\`, next to the exe, and in the data dir.
 pub fn find_handle64() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
@@ -169,7 +154,6 @@ fn handle_regexes() -> &'static (Regex, Regex) {
     })
 }
 
-/// Parses `handle64 -p <pid> -a` output into `(handle_hex, object_name)` pairs.
 pub fn parse_handles(output: &str) -> Vec<(String, String)> {
     let (obj_re, handle_re) = handle_regexes();
     let mut out: Vec<(String, String)> = Vec::new();
@@ -304,9 +288,6 @@ fn monitor_loop(exe: PathBuf, stop: Arc<AtomicBool>) {
     log("[multi] handle64 monitor stopped");
 }
 
-// ------------------------------------------------------------------ facade --
-
-/// Everything multi-instance holds for the app's lifetime.
 #[derive(Default)]
 pub struct MultiInstance {
     pub guard: Option<SingletonGuard>,
@@ -315,7 +296,6 @@ pub struct MultiInstance {
 }
 
 impl MultiInstance {
-    /// (Re)applies the configuration. Safe to call repeatedly, e.g. before each launch.
     pub fn apply(&mut self, cfg: &crate::config::MultiInstanceConfig) {
         if !cfg.enabled {
             if self.guard.is_some() || self.monitor.is_some() || self.cookie_lock.is_some() {
