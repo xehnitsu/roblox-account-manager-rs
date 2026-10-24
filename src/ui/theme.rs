@@ -1,5 +1,5 @@
-//! App themes: the default grey look, and classic themes based on the 2011
-//! Roblox website stylesheet (colours taken from its CSS; see `Palette`).
+//! App themes: the default grey look and classic themes based on the 2011
+//! Roblox website stylesheet (colors from its CSS, see `Palette`).
 
 use std::sync::Arc;
 
@@ -13,7 +13,6 @@ const fn hex(rgb: u32) -> Color32 {
     Color32::from_rgb((rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8)
 }
 
-/// Colours for one classic variant.
 struct Palette {
     dark: bool,
     page: Color32,
@@ -40,11 +39,11 @@ struct Palette {
     drag_line: Color32,
 }
 
-/// Straight from the 2011 stylesheet: page `#F8FCFF` (body), `.Button` white
+/// From the 2011 stylesheet: page `#F8FCFF` (body), `.Button` white
 /// with a `#333` border turning `#6E99C9` with white text on hover, `.Grid`
 /// border `#CCC` with `#EEE` alternate rows and `#DDD` hover, `#00F` links, and
-/// the `#6E99C9` navigation bar. Selection uses the site's `#B6CCE4`, the
-/// selected tab its `#435D77`.
+/// the `#6E99C9` navigation bar. Selection is `#B6CCE4`, the selected tab
+/// `#435D77`.
 const CLASSIC: Palette = Palette {
     dark: false,
     page: hex(0xF8FCFF),
@@ -71,7 +70,7 @@ const CLASSIC: Palette = Palette {
     drag_line: hex(0x464646),
 };
 
-/// The site had no dark mode; this is built from its own dark elements:
+/// The site had no dark mode. This uses its dark elements:
 /// `.StandardBoxLightHeader` `#3B526B`, `.DGB_Button` `#435D77` with a `#777`
 /// border turning `#B6CCE4` / `#435D77` on hover, and the `#6E99C9` accent.
 const CLASSIC_DARK: Palette = Palette {
@@ -130,8 +129,7 @@ pub fn apply(ctx: &egui::Context, theme: AppTheme) {
                 if p.dark { (Theme::Dark, ThemePreference::Dark) } else { (Theme::Light, ThemePreference::Light) };
             ctx.set_theme(preference);
             ctx.set_style_of(egui_theme, Style { visuals: classic_visuals(p), ..Default::default() });
-            // The site's body font was Verdana (Arial as fallback). egui's own
-            // fonts stay last for symbols.
+            // The site used Verdana (Arial fallback). egui's fonts stay last for symbols.
             let dir = std::env::var_os("WINDIR").map(|w| std::path::PathBuf::from(w).join("Fonts"));
             for (name, file) in [("verdana", "verdana.ttf"), ("arial", "arial.ttf")].into_iter().rev() {
                 if let Some(bytes) = dir.as_ref().and_then(|d| std::fs::read(d.join(file)).ok()) {
@@ -144,7 +142,7 @@ pub fn apply(ctx: &egui::Context, theme: AppTheme) {
         }
     }
     ctx.set_fonts(fonts);
-    // Match the Windows title bar too.
+    // Match the Windows title bar.
     let title_bar = match palette(theme) {
         None => egui::SystemTheme::SystemDefault,
         Some(p) if p.dark => egui::SystemTheme::Dark,
@@ -161,7 +159,7 @@ fn grey_selection(mut visuals: Visuals, bg: u8, fg: u8) -> Style {
 
 fn classic_visuals(p: &Palette) -> Visuals {
     let mut v = if p.dark { Visuals::dark() } else { Visuals::light() };
-    // The 2011 site had square corners throughout.
+    // The 2011 site had square corners.
     let square = CornerRadius::ZERO;
     v.panel_fill = p.page;
     v.window_fill = p.window;
@@ -201,13 +199,12 @@ fn classic_visuals(p: &Palette) -> Visuals {
         s.corner_radius = square;
         s.expansion = 0.0;
     }
-    // Plain labels keep the page text colour; `strong` text is black / white.
+    // Plain labels keep the page text color. `strong` text is black or white.
     v.override_text_color = None;
     v.weak_text_color = Some(if p.dark { hex(0x8FA1B5) } else { hex(0x777777) });
     v
 }
 
-/// Frame for the tab bar: the classic themes' navigation bar.
 pub fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
     let frame = egui::Frame::side_top_panel(&ctx.global_style());
     match palette(current(ctx)) {
@@ -216,7 +213,6 @@ pub fn tab_bar_frame(ctx: &egui::Context) -> egui::Frame {
     }
 }
 
-/// Recolours tab buttons for the classic navigation bar. Call inside the bar.
 pub fn style_tab_bar(ui: &mut egui::Ui) {
     let Some(p) = palette(current(ui.ctx())) else { return };
     let v = ui.visuals_mut();
@@ -237,7 +233,6 @@ pub fn style_tab_bar(ui: &mut egui::Ui) {
     }
 }
 
-/// Title bar caption and text colours for the current theme.
 pub fn title_bar_colors(ctx: &egui::Context) -> (Color32, Color32) {
     match palette(current(ctx)) {
         Some(p) => (p.nav, Color32::WHITE),
@@ -248,8 +243,6 @@ pub fn title_bar_colors(ctx: &egui::Context) -> (Color32, Color32) {
     }
 }
 
-/// The main launch button; green like the old site's Play button in the
-/// classic themes.
 pub fn play_button(ctx: &egui::Context, text: String) -> egui::Button<'static> {
     match palette(current(ctx)) {
         None => egui::Button::new(text),
@@ -259,17 +252,15 @@ pub fn play_button(ctx: &egui::Context, text: String) -> egui::Button<'static> {
     }
 }
 
-/// Background of a hovered account row.
 pub fn row_hover(ui: &egui::Ui) -> Color32 {
     palette(current(ui.ctx())).map_or(ui.visuals().widgets.hovered.weak_bg_fill, |p| p.row_hover)
 }
 
-/// Colour of the drop marker when dragging accounts.
 pub fn drag_line(ui: &egui::Ui) -> Color32 {
     palette(current(ui.ctx())).map_or(Color32::from_gray(70), |p| p.drag_line)
 }
 
-/// Green for success messages, readable on light and dark backgrounds.
+/// Success green, readable on light and dark backgrounds.
 pub fn success_color(ui: &egui::Ui) -> Color32 {
     if ui.visuals().dark_mode { Color32::from_rgb(80, 170, 90) } else { Color32::from_rgb(0x1e, 0x8a, 0x3c) }
 }

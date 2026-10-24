@@ -1,12 +1,8 @@
-//! Group handle: a thin frameless bar above the tiled client windows. The
-//! clients become tool windows, so alt-tab and the taskbar list only the bar,
-//! and they hide, show and come to the front with it. Dragging the bar with the left
-//! button moves the grid. The grid re-tiles when a client joins,
-//! leaves or gets resized.
-//!
-//! The syncing runs from the main window's frame, because egui doesn't run a
-//! minimized viewport's UI. Dragging and the alt-tab picture are handled by
-//! a hook on the bar's window, see `launcher::group_bar`.
+//! Group handle: a thin frameless bar above the tiled client windows. Clients become tool
+//! windows, so alt-tab and the taskbar list only the bar, and they hide, show and raise with it.
+//! Syncing runs from the main window's frame because egui doesn't run a
+//! minimized viewport's UI. Dragging and the alt-tab picture are handled by a
+//! hook on the bar's window, see `launcher::group_bar`.
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,7 +28,7 @@ fn viewport_id() -> egui::ViewportId {
     egui::ViewportId::from_hash_of("client_group")
 }
 
-/// What the windows were last arranged for, so they only move on a change.
+/// What the windows were last arranged for, so they move only on change.
 #[derive(PartialEq)]
 struct Applied {
     bar: Cell,
@@ -48,7 +44,7 @@ struct Clicks {
 
 pub struct Group {
     ids: Vec<u64>,
-    /// (pid, window) per client, in tile order.
+    /// (pid, window) per client in tile order.
     members: Vec<(u32, HWND)>,
     bar: Option<HWND>,
     scanned: Option<Instant>,
@@ -56,19 +52,17 @@ pub struct Group {
     /// Where `tile` last put each window.
     cells: Vec<Cell>,
     force: bool,
-    /// A Tile task is queued and its result hasn't come back yet.
     tiling: bool,
     bar_was_min: bool,
-    /// Bar size to go back to after the one-pixel repaint nudge.
+    /// Bar size to restore after the one-pixel repaint nudge.
     nudged: Option<egui::Vec2>,
     last_fg: HWND,
-    /// Grid columns when the group was made; sets the bar's starting size.
+    /// Grid columns when created. Sets the bar's starting size.
     start_cols: f32,
     watch: Watch,
 }
 
 impl Group {
-    /// `ids` are session ids in tile order.
     pub fn new(ids: Vec<u64>) -> Self {
         let start_cols = columns(ids.len()) as f32;
         log(format!("Client group: grouping {} sessions", ids.len()));
@@ -109,8 +103,7 @@ impl Group {
         }
         self.bar = bar;
 
-        // Keep known windows rather than searching again, so a minimized
-        // client can't be mistaken for another window.
+        // Keep known windows instead of searching again, so a minimized client isn't mistaken for another window.
         let members: Vec<(u32, HWND)> = self
             .ids
             .iter()
@@ -126,7 +119,7 @@ impl Group {
         }
         if members.len() != self.members.len() {
             log(format!("Client group: {} windows", members.len()));
-            // A client that just joined may sit behind other windows.
+            // A new client may sit behind other windows.
             if let Some(b) = self.bar {
                 let list: Vec<HWND> = members.iter().map(|&(_, h)| h).collect();
                 wg::raise_under(b, &list);
@@ -141,7 +134,7 @@ impl Group {
             debug("group: a window left its cell, re-tiling");
             self.force = true;
         }
-        // Copy the grid off the screen while it's in front, for alt-tab.
+        // Capture the grid while it's in front, for alt-tab.
         if let Some(b) = self.bar
             && !bar_min
         {
@@ -156,8 +149,7 @@ impl Group {
         group_worker::post(Task::Group(raw(&self.hwnds())));
     }
 
-    /// A restored OpenGL window can stay blank until it's resized, so nudge
-    /// the bar by a pixel and back.
+    /// A restored OpenGL window can stay blank until resized, so nudge the bar by a pixel and back.
     fn sync_restore(&mut self, ctx: &egui::Context) {
         if let Some(size) = self.nudged.take() {
             ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::InnerSize(size));
@@ -178,7 +170,7 @@ impl Group {
         self.bar_was_min = min;
     }
 
-    /// Focusing any window in the group brings the rest up with it.
+    /// Focusing any group window raises the rest.
     fn sync_focus(&mut self) {
         let fg = wg::foreground();
         let mut all = self.hwnds();
@@ -194,7 +186,7 @@ impl Group {
         if let Some((list, b, cells)) = group_worker::take_tiled() {
             self.tiling = false;
             debug(format!("group: tiled under bar {b:?}: {cells:?}"));
-            // Roblox wouldn't shrink that far; match the bar to the grid.
+            // Roblox wouldn't shrink that far, so match the bar to the grid.
             let real = wg::grid_width(&cells);
             if real > b.w {
                 let ppp = ctx.input_for(viewport_id(), |i| i.viewport().native_pixels_per_point).unwrap_or(1.0);
@@ -220,8 +212,7 @@ impl Group {
         self.applied = Some(now);
     }
 
-    /// Shows the bar and keeps the group in sync. Returns false once the
-    /// user ungroups.
+    /// Shows the bar and syncs the group. Returns false once ungrouped.
     pub fn show(&mut self, ctx: &egui::Context, shared: &Arc<Shared>) -> bool {
         group_watch::beat();
         self.rescan(shared);
@@ -257,10 +248,9 @@ impl Group {
             let mut clicks = Clicks { ungroup: ui.input(|i| i.viewport().close_requested()), ..Default::default() };
             let frame = egui::Frame::NONE.fill(ui.visuals().panel_fill).inner_margin(egui::Margin::symmetric(6, 0));
             egui::CentralPanel::default().frame(frame).show(ui, |ui| {
-                // Added first so the buttons on top of it still get clicks.
+                // Added first so buttons on top still get clicks.
                 let bar = ui.interact(ui.max_rect(), ui.id().with("drag"), egui::Sense::drag());
-                // Any other button would start a move that only a left
-                // click ends.
+                // Any other button would start a move that only a left click ends.
                 if bar.drag_started_by(egui::PointerButton::Primary) {
                     ui.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }

@@ -1,12 +1,10 @@
-//! Roblox in an embedded WebView2 window (the Edge engine built into Windows):
-//! logging in to add an account, and browsing roblox.com as an account.
-//!
-//! Each window runs in a child process (this exe started with `--webview`),
-//! so its event loop owns that process's main thread and a crash there can't
-//! take the app down. Secrets go over stdin/stdout, never the command line.
-//! Each window uses a temporary profile that is deleted when it closes.
-//! `browser_login` (an external browser) is the fallback when WebView2 is
-//! missing.
+//! Roblox in an embedded WebView2 window, for logging in and for browsing as an account.
+
+//! Each window runs in a child process (this exe with `--webview`), so its event loop owns
+
+//! that process's main thread and a crash can't take the app down. Secrets go over stdin,
+
+//! never the command line. `browser_login` is the fallback when WebView2 is missing.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -35,12 +33,10 @@ const COOKIE_WAIT: Duration = Duration::from_secs(5);
 /// When a session window checks which page it ended up on.
 const LANDING_CHECK: Duration = Duration::from_secs(6);
 
-/// Whether the WebView2 runtime is installed.
 pub fn available() -> bool {
     wry::webview_version().is_ok()
 }
 
-/// Command-line flag that makes this exe run a single WebView2 window.
 pub const CHILD_FLAG: &str = "--webview";
 
 /// Opens the Roblox login page, with the username and password filled in if
@@ -71,14 +67,11 @@ pub async fn login(credentials: Option<(String, String)>) -> Result<String> {
     bail!("login window stopped unexpectedly ({})", output.status)
 }
 
-/// Opens roblox.com logged in as the account in its own window, which stays
-/// open until the user closes it.
 pub fn open_session(username: &str, cookie: &str) -> Result<()> {
     spawn_child("session", &json!({ "username": username, "cookie": cookie }))?;
     Ok(())
 }
 
-/// Starts this exe as a window process and hands it `input` on stdin.
 fn spawn_child(mode: &str, input: &Value) -> Result<std::process::Child> {
     let exe = std::env::current_exe().context("finding the app's exe")?;
     let mut child = Command::new(exe)
@@ -254,8 +247,6 @@ fn roblosecurity(webview: &WebView) -> Option<String> {
         .map(|c| c.value().to_owned())
 }
 
-/// Fills in the login form once it appears. Pressing "Log in" (and any
-/// captcha) is left to the user.
 fn fill_script(username: &str, password: &str) -> String {
     let u = serde_json::to_string(username).unwrap_or_default();
     let p = serde_json::to_string(password).unwrap_or_default();
@@ -343,7 +334,6 @@ fn remove_profile(profile: &Path) {
     log(format!("could not delete temporary profile {}", profile.display()));
 }
 
-/// Deletes profiles left behind by an earlier run. Call before any window opens.
 pub fn remove_stale_profiles() {
     let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
     let stale: Vec<PathBuf> = entries

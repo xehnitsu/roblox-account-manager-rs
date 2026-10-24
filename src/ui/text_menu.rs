@@ -1,7 +1,7 @@
-//! Right-click menu (Cut, Copy, Paste, Select all) for every text field.
-//! egui text fields have none. Instead of wiring each field, this finds the
-//! field under the pointer on a right-click and replays the chosen action as
-//! the matching input event on the next frame, with the field focused again.
+//! Right-click menu (Cut, Copy, Paste, Select all) for every text field, since
+//! egui has none. On right-click it finds the field under the pointer, then
+//! replays the chosen action as an input event on the next frame with the
+//! field refocused.
 
 use egui::text::CCursorRange;
 use egui::text_edit::TextEditState;
@@ -9,16 +9,15 @@ use egui::{Context, Event, Id, Key, Modifiers, Pos2};
 
 #[derive(Default)]
 pub struct TextMenu {
-    /// Field the menu is open for, where, and whether text is selected.
+    /// Field the menu is open for, its position, and whether text is selected.
     open: Option<(Id, Pos2, bool)>,
-    /// Selection to put back: a right-click moves the field's cursor.
+    /// Selection to restore, since a right-click moves the cursor.
     restore: Option<(Id, Option<CCursorRange>)>,
-    /// Events to send to a field on the next frame.
+    /// Events for a field on the next frame.
     pending: Option<(Id, Vec<Event>)>,
 }
 
 impl TextMenu {
-    /// Call once per frame before any widgets are drawn.
     pub fn show(&mut self, ctx: &Context) {
         if let Some((id, range)) = self.restore.take()
             && let Some(mut state) = TextEditState::load(ctx, id)
@@ -81,7 +80,6 @@ impl TextMenu {
     }
 }
 
-/// The text field under `pos` on the last frame, if any.
 fn text_field_at(ctx: &Context, pos: Pos2) -> Option<Id> {
     let top = ctx.layer_id_at(pos)?;
     let ids: Vec<Id> = ctx.viewport(|v| {

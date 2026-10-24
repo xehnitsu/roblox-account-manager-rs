@@ -15,12 +15,11 @@ pub struct State {
     new_pw2: String,
     pw_msg: Option<Result<String, String>>,
     download: Option<Pending<anyhow::Result<PathBuf>>>,
-    /// Open file picker, and whether it's for export (else import).
+    /// Open file picker, and whether it is for export (else import).
     picking: Option<Pending<Option<PathBuf>>>,
     picking_export: bool,
     transfer_pw: String,
     transfer_pw2: String,
-    /// Import only accounts, keeping this PC's settings.
     keep_settings: bool,
     transfer_msg: Option<Result<String, String>>,
 }
@@ -63,7 +62,7 @@ impl State {
 
             ui.separator();
             ui.heading("Multi-instance");
-            ui.checkbox(&mut cfg.multi_instance.enabled, "Allow several Roblox clients at once (hold singleton mutex)");
+            ui.checkbox(&mut cfg.multi_instance.enabled, "Allow multiple Roblox clients (hold singleton mutex)");
             ui.add_enabled_ui(cfg.multi_instance.enabled, |ui| {
                 ui.checkbox(&mut cfg.multi_instance.error_773_fix, "Error 773 fix (lock RobloxCookies.dat)");
                 ui.checkbox(
@@ -78,7 +77,7 @@ impl State {
                             ui.label(format!("handle64.exe: {}", p.display()));
                         }
                         None => {
-                            ui.label("handle64.exe not found. Put it in a utils\\ folder next to this app, or download it from Microsoft Sysinternals (by downloading you accept the Sysinternals license).");
+                            ui.label("handle64.exe not found. Put it in a utils\\ folder next to this app or download it from Microsoft Sysinternals (downloading means you accept the Sysinternals license).");
                             let busy = self.download.is_some();
                             if ui.add_enabled(!busy, egui::Button::new("Download handle64.exe")).clicked() {
                                 self.download = Some(Pending::spawn(shared, multi_instance::download_handle64()));
@@ -91,17 +90,17 @@ impl State {
                 });
             });
             ui.label(format!("Status: {}", shared.multi.lock().unwrap().status()));
-            ui.weak("The mutex can only be taken while no Roblox client is running. If status says “mutex not held”, close all Roblox windows and it is taken again automatically.");
+            ui.weak("The mutex can only be taken while no Roblox client is running. If status says “mutex not held”, close all Roblox windows and it is retaken.");
 
             ui.separator();
             ui.heading("Launching");
             ui.horizontal(|ui| {
                 ui.label("Pause between launches:");
                 ui.add(egui::DragValue::new(&mut cfg.launch_delay_ms).range(0..=60_000).speed(50).suffix(" ms"))
-                    .on_hover_text("Only applies when launching several accounts; a single launch starts right away.");
+                    .on_hover_text("Only applies when launching several accounts.");
             });
             ui.checkbox(&mut cfg.wait_for_join, "Wait for each account to join before launching the next")
-                .on_hover_text("Reads the joining client's log. Waits up to 30 s, then launches the next account anyway.");
+                .on_hover_text("Reads the joining client's log. Waits up to 30 s, then launches the next account.");
 
             ui.separator();
             ui.heading("Auto-rejoin");
@@ -152,11 +151,13 @@ impl State {
                     }
                 });
                 ui.weak(match cfg.anti_afk.mode {
-                    AfkMode::Background => "Key messages go straight to each Roblox window; your focus never changes. Experimental: if clients still get kicked after 20 idle minutes, switch to “Focus window briefly”.",
-                    AfkMode::Focus => "Each Roblox window is focused for a moment, then focus returns to your window.",
+                    AfkMode::Background => "Sends key messages directly to each Roblox window without changing focus. Experimental: if clients still get kicked after 20 idle minutes, use “Focus window briefly”.",
+                    AfkMode::Focus => "Focuses each Roblox window briefly, then returns focus to your window.",
                 });
             });
 
+            ui.separator();
+            updates_section(ui, &mut cfg, shared);
             ui.separator();
             self.password_section(ui, shared);
             ui.separator();
@@ -213,7 +214,7 @@ impl State {
 
     fn transfer_section(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         ui.heading("Export / import");
-        ui.label("Moves accounts, groups and settings to another PC in one password-protected file.");
+        ui.label("Move accounts, groups and settings to another PC in one password-protected file.");
         if let Some(picked) = poll(&mut self.picking)
             && let Some(path) = picked
         {
@@ -252,7 +253,7 @@ impl State {
             }
             ui.checkbox(&mut self.keep_settings, "Accounts only (keep current settings)");
         });
-        ui.weak("The file holds every account's login cookie. Keep it and its password private.");
+        ui.weak("The file contains every account's login cookie. Keep it and its password private.");
         match &self.transfer_msg {
             Some(Ok(m)) => {
                 ui.label(m.as_str());
@@ -310,7 +311,6 @@ impl State {
     }
 }
 
-/// Opens the Windows save (export) or open (import) dialog, starting in Downloads.
 fn pick_file(shared: &Shared, export: bool) -> Pending<Option<PathBuf>> {
     Pending::spawn(shared, async move {
         tokio::task::spawn_blocking(move || {
@@ -327,4 +327,25 @@ fn pick_file(shared: &Shared, export: bool) -> Pending<Option<PathBuf>> {
         .ok()
         .flatten()
     })
+}
+
+fn updates_section(ui: &mut egui::Ui, cfg: &mut crate::config::Config, shared: &Arc<Shared>) {
+    use crate::updater::{self, Status};
+    ui.heading("Updates");
+    ui.checkbox(&mut cfg.auto_update, "Install new versions from GitHub at startup");
+    ui.horizontal(|ui| {
+        let status = updater::status();
+        let busy = matches!(status, Status::Checking | Status::Downloading(_));
+        if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
+            shared.rt.spawn(updater::run(ui.ctx().clone()));
+        }
+        ui.weak(match status {
+            Status::Idle => format!("Version {}", updater::CURRENT),
+            Status::Checking => "Checking...".into(),
+            Status::UpToDate => format!("Version {} is the latest", updater::CURRENT),
+            Status::Downloading(tag) => format!("Downloading {tag}..."),
+            Status::Ready(tag) => format!("{tag} installed, restart to use it"),
+            Status::Failed(e) => format!("Update failed: {e}"),
+        });
+    });
 }

@@ -1,10 +1,4 @@
-//! Reads each Roblox client's own log file (`%LOCALAPPDATA%\Roblox\logs`) to
-//! learn, without asking Roblox's servers, when it joined a game, which
-//! server, and why it left one: kicked, lost connection, server shut down,
-//! idle, or the player left on purpose.
-//!
-//! A log belongs to the client whose threads wrote it: each line carries the
-//! writing thread's ID, and Windows says which process owns that thread.
+//! Reads each client's own Roblox log (`%LOCALAPPDATA%\Roblox\logs`) to see when it joined a game and why it left.
 
 use std::collections::HashMap;
 use std::fs::File;
@@ -17,7 +11,6 @@ use windows::Win32::System::Diagnostics::ToolHelp::{
     CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next,
 };
 
-/// Read at most this much new log per pass.
 const MAX_READ: u64 = 8 * 1024 * 1024;
 /// Only logs written this recently can belong to a running client.
 const RECENT: Duration = Duration::from_secs(6 * 60 * 60);
@@ -26,18 +19,12 @@ pub fn logs_dir() -> Option<PathBuf> {
     std::env::var_os("LOCALAPPDATA").map(|d| PathBuf::from(d).join("Roblox").join("logs"))
 }
 
-/// What a log line says happened.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Event {
-    Joined {
-        place_id: u64,
-        job_id: String,
-    },
+    Joined { place_id: u64, job_id: String },
     Teleporting,
-    /// The player left the game themselves (back to the Roblox home screen).
     Left,
     Disconnected(u32),
-    /// The game's kick message, when it logs one.
     KickMessage(String),
 }
 
@@ -78,7 +65,6 @@ impl Drop {
     }
 }
 
-/// Parses one log line.
 pub fn classify(line: &str) -> Option<Event> {
     if let Some(rest) = line.split("! Joining game '").nth(1) {
         let (job_id, rest) = rest.split_once('\'')?;
@@ -122,10 +108,9 @@ fn line_thread(line: &str) -> Option<u32> {
     u32::from_str_radix(parts.next()?, 16).ok()
 }
 
-/// Owning process of every thread on the system.
 fn thread_owners() -> HashMap<u32, u32> {
     let mut owners = HashMap::new();
-    // SAFETY: standard Toolhelp snapshot walk; the handle is closed below.
+    // SAFETY: standard Toolhelp snapshot walk, handle closed below.
     unsafe {
         let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return owners };
         let mut entry = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };
@@ -142,7 +127,6 @@ fn thread_owners() -> HashMap<u32, u32> {
     owners
 }
 
-/// The log of each of `pids` that can be found. Logs already claimed are skipped.
 pub fn find_logs(pids: &[u32], claimed: &[PathBuf]) -> HashMap<u32, PathBuf> {
     let mut found = HashMap::new();
     let Some(dir) = logs_dir() else { return found };
@@ -179,7 +163,6 @@ fn log_owner(path: &Path, owners: &HashMap<u32, u32>) -> Option<u32> {
     head.lines().filter_map(line_thread).find_map(|t| owners.get(&t).copied())
 }
 
-/// Reads a log a bit at a time, returning only complete new lines.
 #[derive(Debug, Clone)]
 pub struct Reader {
     pub path: PathBuf,

@@ -1,8 +1,4 @@
 //! Anti-AFK: taps one key in each Roblox window.
-//!
-//! - Background: posts WM_ACTIVATE + WM_KEYDOWN/WM_KEYUP to the window
-//!   without changing focus.
-//! - Focus: briefly focuses the window, sends real input, restores focus.
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -87,8 +83,6 @@ pub(crate) fn windows_for(pids: &HashSet<u32>) -> Vec<HWND> {
     ctx.found
 }
 
-/// Taps `key` once in every visible window owned by `pids`. Returns how many
-/// windows were nudged.
 pub fn nudge(pids: &HashSet<u32>, key: AfkKey, mode: AfkMode) -> usize {
     let hwnds = windows_for(pids);
     if hwnds.is_empty() {
@@ -115,7 +109,7 @@ pub(crate) fn key_lparam(scan: u32, extended: bool, up: bool) -> LPARAM {
 
 fn nudge_background(hwnds: &[HWND], key: AfkKey) -> usize {
     let (vk, extended) = vk(key);
-    // SAFETY: MapVirtualKeyW is a pure lookup; PostMessageW on a stale
+    // SAFETY: MapVirtualKeyW is a pure lookup. PostMessageW on a stale
     // handle just fails.
     let scan = unsafe { MapVirtualKeyW(vk.0 as u32, MAPVK_VK_TO_VSC) };
     let mut sent = 0;
@@ -138,7 +132,7 @@ fn nudge_background(hwnds: &[HWND], key: AfkKey) -> usize {
 
 fn nudge_focus(hwnds: &[HWND], key: AfkKey) -> usize {
     let (vk, extended) = vk(key);
-    // SAFETY: plain Win32 window calls on handles we just enumerated; a
+    // SAFETY: plain Win32 window calls on handles we just enumerated. A
     // handle that died meanwhile just makes the call fail.
     unsafe {
         let original = GetForegroundWindow();

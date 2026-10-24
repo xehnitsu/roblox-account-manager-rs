@@ -33,7 +33,6 @@ pub struct Shared {
     pub sessions: Mutex<Vec<Session>>,
     pub config: Mutex<Config>,
     pub multi: Mutex<MultiInstance>,
-    /// Accounts whose cookie Roblox rejected (see `check_cookies`).
     pub expired: Mutex<HashSet<Uuid>>,
     /// Game name and icon by place ID; None while loading.
     pub places: Mutex<HashMap<u64, Option<PlaceInfo>>>,
@@ -50,7 +49,6 @@ impl Shared {
         self.sessions.lock().unwrap().iter().find(|s| s.id == id).cloned()
     }
 
-    /// Game name and icon of a place, looked up in the background on first use.
     pub fn place_info(self: &Arc<Self>, place_id: u64) -> Option<PlaceInfo> {
         let mut places = self.places.lock().unwrap();
         if let Some(info) = places.get(&place_id) {
@@ -82,7 +80,6 @@ impl Shared {
         }
     }
 
-    /// PIDs of clients this app launched and is still tracking.
     pub fn claimed_pids(&self) -> HashSet<u32> {
         self.sessions
             .lock()
@@ -156,8 +153,6 @@ pub async fn add_account_from_cookie(
     Ok(user.name)
 }
 
-/// Fetches avatars for accounts that don't have one (e.g. the thumbnail was
-/// still rendering when the account was added).
 /// Checks whether each account's cookie still works and marks the expired
 /// ones. Accounts that can't be checked (e.g. no network) keep their mark.
 pub async fn check_cookies(shared: Arc<Shared>, ids: Option<HashSet<Uuid>>) {
@@ -189,6 +184,8 @@ pub async fn check_cookies(shared: Arc<Shared>, ids: Option<HashSet<Uuid>>) {
     }
 }
 
+/// Fetches avatars for accounts that have none, e.g. when the thumbnail was
+/// still rendering when the account was added.
 pub async fn fill_missing_avatars(shared: Arc<Shared>) {
     let missing: Vec<(Uuid, u64)> = shared
         .accounts
@@ -231,8 +228,6 @@ pub async fn add_account_from_credentials(shared: &Shared, username: &str, passw
     }
 }
 
-/// Logs in through a WebView2 window (or an external browser without WebView2)
-/// and adds the account.
 pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(String, String)>) -> Result<String> {
     let cookie = if crate::webview::available() {
         crate::webview::login(credentials.clone()).await?
@@ -241,8 +236,6 @@ pub async fn add_account_via_browser(shared: &Shared, credentials: Option<(Strin
     };
     add_account_from_cookie(shared, &cookie, credentials).await
 }
-
-// ----------------------------------------------------------------- the app --
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tab {
@@ -273,9 +266,7 @@ pub struct App {
     macros_ui: ui::macros::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
-    /// Title bar colours last applied.
     title_bar: Option<(egui::Color32, egui::Color32)>,
-    /// The window size was checked after startup.
     size_checked: bool,
     text_menu: ui::text_menu::TextMenu,
 }
@@ -286,6 +277,7 @@ impl App {
         ui::HttpLoader::install(&cc.egui_ctx);
         let config = Config::load();
         crate::webview::remove_stale_profiles();
+        crate::updater::remove_old();
         ui::theme::apply(&cc.egui_ctx, config.theme);
         cc.egui_ctx.set_zoom_factor(config.ui_scale.clamp(0.5, 3.0));
         let shared = Arc::new(Shared {
@@ -317,6 +309,9 @@ impl App {
         shared.multi.lock().unwrap().apply(&config.multi_instance);
         rt.spawn(crate::launcher::watchdog::run(shared.clone()));
         crate::macros::recorder::start(cc.egui_ctx.clone());
+        if config.auto_update {
+            rt.spawn(crate::updater::run(cc.egui_ctx.clone()));
+        }
 
         Self {
             accounts_ui: ui::account_list::State::new(&config),
@@ -374,7 +369,7 @@ impl App {
 }
 
 impl App {
-    /// Resizes and centres the window if it opened smaller than the minimum
+    /// Resizes and centers the window if it opened smaller than the minimum
     /// size, which Windows otherwise only enforces once the user resizes it.
     fn fix_window_size(&mut self, ctx: &egui::Context) {
         let (inner, monitor) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().monitor_size));
@@ -385,7 +380,7 @@ impl App {
             return;
         }
         let size = egui::Vec2::from(DEFAULT_SIZE);
-        log(format!("window opened at {:.0}x{:.0}; resizing to the default size", inner.width(), inner.height()));
+        log(format!("window opened at {:.0}x{:.0}, resizing to the default size", inner.width(), inner.height()));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         if let Some(monitor) = monitor {
             let pos = ((monitor - size) / 2.0).max(egui::Vec2::ZERO);
@@ -426,6 +421,14 @@ impl eframe::App for App {
                     ui.selectable_value(&mut self.tab, tab, name);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let crate::updater::Status::Ready(tag) = crate::updater::status()
+                        && ui.button(format!("Restart to update to {tag}")).clicked()
+                    {
+                        match crate::updater::restart() {
+                            Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                            Err(e) => log(format!("restarting failed: {e:#}")),
+                        }
+                    }
                     ui.weak(self.shared.multi.lock().unwrap().status());
                 });
             });
@@ -457,7 +460,6 @@ impl eframe::App for App {
         });
 
         match self.tab {
-            // The Accounts tab lays out its own side and central panels.
             Tab::Accounts => self.accounts_ui.show(ui, &self.shared),
             tab => {
                 egui::CentralPanel::default().show(ui, |ui| match tab {
@@ -487,7 +489,6 @@ impl eframe::App for App {
         }
         self.add_ui.show(ui.ctx(), &self.shared);
 
-        // Ctrl +/- zooms too; remember whatever the user ends up with.
         let zoom = ui.ctx().zoom_factor();
         let changed = {
             let mut cfg = self.shared.config.lock().unwrap();
@@ -499,7 +500,7 @@ impl eframe::App for App {
             self.shared.save_config();
         }
 
-        // Session status changes come from background tasks; keep the view fresh.
+        // Background tasks change session status, so keep repainting.
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
     }
 }

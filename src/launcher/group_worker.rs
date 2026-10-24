@@ -1,9 +1,7 @@
-//! Background thread for every window-group call that waits on a Roblox
-//! client. Styling, tiling and moving a client's window all block until the
-//! client handles them, and a busy client can take seconds, so none of it
-//! runs on the UI thread. Each client gets its own mover thread that keeps
-//! only the newest position, so a slow client skips ahead instead of working
-//! through a backlog, and never holds up the others.
+//! Background thread for window-group calls that wait on a Roblox client, which can take seconds.
+//! Each client gets its own mover thread that keeps only the newest position, so a slow
+//! client skips ahead instead of working through a backlog, and never holds up the others.
+
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
@@ -15,20 +13,15 @@ use windows::Win32::UI::WindowsAndMessaging::{IsWindow, SWP_NOACTIVATE, SWP_NOSI
 use super::group_bar;
 use super::window_group::{self as wg, Cell};
 
-/// Window handles are kept as isize so they can cross threads.
 pub enum Task {
-    /// Make these tool windows.
     Group(Vec<isize>),
-    /// Tile these windows under the bar at this rect.
     Tile { hwnds: Vec<isize>, bar: Cell },
-    /// Hand these windows back, then signal the sender if there is one.
     Release(Vec<isize>, Option<Sender<()>>),
 }
 
 /// (window, cell, resize too) for each window.
 pub type Moves = Vec<(isize, Cell, bool)>;
 
-/// What a Tile task produced: the windows, the bar rect and their cells.
 pub type Tiled = (Vec<isize>, Cell, Vec<Cell>);
 
 #[derive(Default)]
@@ -90,7 +83,6 @@ fn run(w: &Worker) {
     }
 }
 
-/// The newest position for one client's window.
 #[derive(Default)]
 struct Slot {
     next: Mutex<Option<(Cell, bool)>>,
@@ -140,7 +132,6 @@ pub fn post(task: Task) {
     w.ready.notify_one();
 }
 
-/// Replaces any move that hasn't run yet, per window.
 pub fn post_moves(moves: Moves) {
     let mut map = movers().lock().unwrap();
     for (h, c, sized) in moves {
@@ -158,7 +149,6 @@ pub fn post_moves(moves: Moves) {
     }
 }
 
-/// The result of the last Tile task, once.
 pub fn take_tiled() -> Option<Tiled> {
     worker().tiled.lock().unwrap().take()
 }

@@ -28,15 +28,12 @@ use super::window_group::{self as wg, Cell, grid, rect};
 use crate::applog::debug;
 
 const SUBCLASS_ID: usize = 0x6772_6f75; // "grou"
-/// Width the cached grid picture is scaled down to.
 const SNAPSHOT_WIDTH: i32 = 960;
 
 /// Window handles are stored as isize so the state can live in a static.
 struct State {
     members: Vec<isize>,
-    /// Each window's cell relative to the bar's bottom-left corner.
     offsets: Vec<Cell>,
-    /// Bar width the offsets were made for.
     width: i32,
     snapshot: Option<Snapshot>,
     bar: isize,
@@ -44,7 +41,6 @@ struct State {
     preview_size: (i32, i32),
 }
 
-/// Top-down BGRA pixels.
 struct Snapshot {
     w: i32,
     h: i32,
@@ -52,7 +48,6 @@ struct Snapshot {
 }
 
 impl Snapshot {
-    /// Average of all color channels, 0 to 255.
     fn brightness(&self) -> u64 {
         let px = self.pixels.as_chunks::<4>().0;
         let sum: u64 = px.iter().map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum();
@@ -81,7 +76,6 @@ impl Snapshot {
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
-/// True while the user drags the bar.
 static MOVING: AtomicBool = AtomicBool::new(false);
 static MINIMIZED: AtomicBool = AtomicBool::new(false);
 
@@ -122,7 +116,7 @@ pub fn install(bar: HWND) {
     });
     set_bool(bar, DWMWA_FORCE_ICONIC_REPRESENTATION);
     set_bool(bar, DWMWA_HAS_ICONIC_BITMAP);
-    // SAFETY: called on the UI thread that owns `bar`; the hook removes
+    // SAFETY: called on the UI thread that owns `bar`. The hook removes
     // itself when the window is destroyed.
     unsafe {
         let _ = SetWindowSubclass(bar, Some(bar_proc), SUBCLASS_ID, 0);
@@ -137,7 +131,6 @@ pub fn uninstall(bar: HWND) {
     *STATE.lock().unwrap() = None;
 }
 
-/// Records where the windows were tiled, relative to the bar.
 pub fn update(members: &[HWND], cells: &[Cell], bar: Cell) {
     if let Some(s) = STATE.lock().unwrap().as_mut() {
         s.members = members.iter().map(|h| h.0 as isize).collect();
@@ -235,7 +228,6 @@ fn notable(msg: u32) -> Option<&'static str> {
     })
 }
 
-/// Moves the windows along with the bar, whose bottom-left is now (`x`, `y`).
 fn follow(x: i32, y: i32, width: i32) {
     let moves: Moves = {
         let Ok(st) = STATE.try_lock() else { return };
@@ -244,8 +236,7 @@ fn follow(x: i32, y: i32, width: i32) {
         let cells: Vec<Cell> = if same_size {
             s.offsets.iter().map(|o| Cell { x: x + o.x, y: y + o.y, ..*o }).collect()
         } else {
-            // The bar changed width: a rough grid now, the real tile follows
-            // from the UI.
+            // Width changed: use a rough grid now, the UI tiles properly later.
             grid(s.members.len(), x, y, width)
         };
         s.members.iter().zip(cells).map(|(&h, c)| (h, c, !same_size)).collect()
@@ -253,7 +244,6 @@ fn follow(x: i32, y: i32, width: i32) {
     group_worker::post_moves(moves);
 }
 
-/// A 32-bit top-down DIB selected into a new memory DC.
 struct Dib {
     dc: HDC,
     bmp: HBITMAP,
@@ -278,7 +268,7 @@ impl Dib {
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        // SAFETY: `info` describes a valid 32-bit DIB; the DC and bitmap are
+        // SAFETY: `info` describes a valid 32-bit DIB. The DC and bitmap are
         // freed in Drop.
         unsafe {
             let bmp = CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
@@ -290,7 +280,7 @@ impl Dib {
     }
 
     fn pixels(&mut self) -> &mut [u8] {
-        // SAFETY: flushes pending GDI drawing; `bits` points at w * h * 4
+        // SAFETY: flushes pending GDI drawing. `bits` points at w * h * 4
         // bytes owned by the DIB, which lives as long as self.
         unsafe {
             let _ = GdiFlush();
@@ -366,7 +356,6 @@ fn send_thumbnail(bar: HWND, max_w: i32, max_h: i32) {
     debug(format!("group: alt-tab asked for {max_w}x{max_h} (brightness {}), {result:?}", snap.brightness()));
 }
 
-/// Scales the picture to fit and gives it to DWM as the bar's preview.
 fn push(bar: HWND, snap: &Snapshot, max_w: i32, max_h: i32) -> windows::core::Result<()> {
     let fail = windows::core::Error::from_thread;
     let mut src = Dib::new(snap.w, snap.h).ok_or_else(fail)?;
@@ -374,7 +363,7 @@ fn push(bar: HWND, snap: &Snapshot, max_w: i32, max_h: i32) -> windows::core::Re
     let scale = (max_w as f32 / snap.w as f32).min(max_h as f32 / snap.h as f32).min(1.0);
     let (w, h) = (((snap.w as f32 * scale) as i32).max(1), ((snap.h as f32 * scale) as i32).max(1));
     let mut out = Dib::new(w, h).ok_or_else(fail)?;
-    // SAFETY: both DCs are live DIB DCs; DWM copies the bitmap, so `out`
+    // SAFETY: both DCs are live DIB DCs. DWM copies the bitmap, so `out`
     // can be freed afterwards.
     unsafe {
         let _ = StretchBlt(out.dc, 0, 0, w, h, Some(src.dc), 0, 0, snap.w, snap.h, SRCCOPY);

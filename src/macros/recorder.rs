@@ -1,9 +1,9 @@
-//! Records input with low-level keyboard and mouse hooks, and listens for the
+//! Records input with low-level keyboard and mouse hooks and listens for the
 //! global hotkeys (F8 record, F9 play). Both run on one thread with its own
-//! message loop. The hooks are only installed while recording.
+//! message loop. Hooks are installed only while recording.
 //!
-//! Input injected by other programs (including our own playback) and input
-//! while this app's window is in front (e.g. pressing Stop) is not recorded.
+//! Injected input (including our own playback) and input while this app's
+//! window is in front (e.g. pressing Stop) are not recorded.
 
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -44,7 +44,6 @@ struct Recording {
     last_move: u32,
 }
 
-/// Starts the hotkey and recording thread. Call once.
 pub fn start(ctx: egui::Context) {
     let _ = CTX.set(ctx);
     std::thread::spawn(|| {
@@ -85,7 +84,6 @@ pub fn start(ctx: egui::Context) {
     });
 }
 
-/// Hotkeys pressed since the last call (`RECORD_PRESSED`, `PLAY_PRESSED`).
 pub fn take_hotkeys() -> u8 {
     HOTKEYS.swap(0, Ordering::Relaxed)
 }
@@ -138,7 +136,6 @@ fn push(kind: Kind) {
     }
 }
 
-/// The foreground window, unless it belongs to this app.
 pub(super) fn target_window() -> Option<HWND> {
     // SAFETY: read-only window queries.
     unsafe {
@@ -149,7 +146,6 @@ pub(super) fn target_window() -> Option<HWND> {
     }
 }
 
-/// Screen point as a fraction of the window's client area.
 pub(super) fn to_fraction(hwnd: HWND, pt: POINT) -> (f32, f32) {
     let mut p = pt;
     let mut rect = RECT::default();

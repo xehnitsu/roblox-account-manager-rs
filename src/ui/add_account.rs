@@ -1,5 +1,3 @@
-//! "Add account" popup, opened from the Accounts toolbar.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,7 +23,7 @@ pub struct State {
     bulk_task: Option<Pending<BulkReport>>,
     browser_task: Option<Pending<anyhow::Result<String>>>,
     message: Option<Result<String, String>>,
-    /// Bulk credentials that Roblox answered with a captcha / 2-step challenge.
+    /// Bulk credentials Roblox answered with a captcha or 2-step challenge.
     needs_browser: Vec<(String, String)>,
 }
 
@@ -54,7 +52,6 @@ pub struct BulkReport {
     needs_browser: Vec<(String, String)>,
 }
 
-/// One line of bulk input.
 #[derive(Debug, PartialEq, Eq)]
 pub enum BulkLine {
     Cookie(String),
@@ -67,7 +64,7 @@ pub fn parse_bulk_line(line: &str) -> Option<BulkLine> {
         return None;
     }
     let cookie = line.trim_start_matches(".ROBLOSECURITY=");
-    // Real cookies start with the warning banner and are hundreds of chars long.
+    // Real cookies start with the warning banner and are hundreds of characters long.
     if cookie.starts_with("_|WARNING") || cookie.len() > 200 {
         return Some(BulkLine::Cookie(cookie.to_owned()));
     }
@@ -103,8 +100,7 @@ impl State {
                     self.password.clear();
                 }
                 Ok(LoginResult::NeedsBrowser(kind)) => {
-                    // Like the original apps: finish the login in a browser window
-                    // with the form filled in; the user solves the challenge there.
+                    // Finish in a browser window with the form filled in, where the user solves the challenge.
                     self.message = Some(Ok(format!(
                         "Roblox asked for a {kind} challenge. Finish the login in the browser window."
                     )));
@@ -123,11 +119,11 @@ impl State {
         if let Some(r) = poll(&mut self.bulk_task) {
             let mut msg = format!("Bulk import: {} added", r.added);
             if !r.failed.is_empty() {
-                msg += &format!(", {} failed ({})", r.failed.len(), r.failed.join("; "));
+                msg += &format!(", {} failed ({})", r.failed.len(), r.failed.join(", "));
             }
             if !r.needs_browser.is_empty() {
                 let names: Vec<&str> = r.needs_browser.iter().map(|(u, _)| u.as_str()).collect();
-                msg += &format!(". Needs browser login (captcha / 2-step): {}", names.join(", "));
+                msg += &format!(". Needs browser login (captcha or 2-step): {}", names.join(", "));
             }
             self.message = Some(if r.failed.is_empty() { Ok(msg) } else { Err(msg) });
             self.needs_browser = r.needs_browser;
@@ -198,7 +194,7 @@ impl State {
                 });
             });
         });
-        // Esc or a click outside closes the popup; running tasks keep going.
+        // Esc or a click outside closes the popup. Running tasks continue.
         if modal.should_close() {
             self.open = false;
         }
@@ -238,7 +234,6 @@ impl State {
             let pass =
                 ui.add(egui::TextEdit::singleline(&mut self.password).password(true).desired_width(f32::INFINITY));
             ui.end_row();
-            // Enter in either field logs in, like pressing "Log in".
             enter = (user.lost_focus() || pass.lost_focus()) && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
         let ready = !self.username.trim().is_empty() && !self.password.is_empty();
@@ -254,8 +249,7 @@ impl State {
                 let creds = (self.username.trim().to_owned(), self.password.clone());
                 self.start_browser(shared, Some(creds));
             }
-            // Direct API login; Roblox usually answers it with a captcha, in
-            // which case the browser opens anyway.
+            // Direct API login. Roblox usually answers with a captcha, then the browser opens anyway.
             if ui
                 .add_enabled(idle && ready, egui::Button::new("Log in without browser"))
                 .on_hover_text("Tries the login API directly. Falls back to the browser if Roblox asks for a captcha.")
@@ -308,7 +302,7 @@ async fn bulk_import(shared: Arc<Shared>, lines: Vec<BulkLine>) -> BulkReport {
     let mut r = BulkReport { added: 0, failed: Vec::new(), needs_browser: Vec::new() };
     for (i, line) in lines.into_iter().enumerate() {
         if i > 0 {
-            // Stay well clear of Roblox's rate limits.
+            // Stay under Roblox's rate limits.
             tokio::time::sleep(Duration::from_millis(1500)).await;
         }
         match line {

@@ -1,4 +1,4 @@
-//! Colours the native window title bar (Windows 11; ignored on Windows 10).
+//! Colors the native window title bar (Windows 11; ignored on Windows 10).
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::Foundation::HWND;
@@ -6,7 +6,6 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR, DWMWINDOWATTRIBUTE, DwmSetWindowAttribute,
 };
 
-/// Sets caption, caption text and border colours.
 pub fn set_colors(window: &impl HasWindowHandle, caption: egui::Color32, text: egui::Color32) {
     let Ok(handle) = window.window_handle() else { return };
     let RawWindowHandle::Win32(h) = handle.as_raw() else { return };

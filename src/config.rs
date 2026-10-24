@@ -19,20 +19,17 @@ pub struct Config {
     pub multi_instance: MultiInstanceConfig,
     pub auto_rejoin: AutoRejoinConfig,
     pub anti_afk: AntiAfkConfig,
-    /// Pause between launches when launching several accounts at once.
     pub launch_delay_ms: u64,
     /// When launching several accounts, start the next one once the previous
     /// one has joined its game (read from its log), up to `JOIN_WAIT_MAX`.
     pub wait_for_join: bool,
-    /// Last values typed into the launch panel.
     pub last_place_id: String,
-    /// Places launched recently, newest first.
     pub recent_places: Vec<u64>,
     /// Group priority: the account list shows these groups first, in this order.
     pub group_order: Vec<String>,
-    /// UI zoom factor (Ctrl + / Ctrl - also change it).
     pub ui_scale: f32,
     pub theme: AppTheme,
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -48,6 +45,7 @@ impl Default for Config {
             group_order: Vec::new(),
             ui_scale: 1.0,
             theme: AppTheme::default(),
+            auto_update: true,
         }
     }
 }
@@ -55,9 +53,7 @@ impl Default for Config {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct MultiInstanceConfig {
-    /// Hold the Roblox singleton mutexes so extra clients can start.
     pub enabled: bool,
-    /// Also run the handle64.exe monitor (needs admin + handle64.exe).
     pub handle64: bool,
     /// Lock RobloxCookies.dat while multi-instance is active (error 773 fix).
     pub error_773_fix: bool,
@@ -74,7 +70,7 @@ impl Default for MultiInstanceConfig {
 pub struct AutoRejoinConfig {
     pub enabled: bool,
     pub max_retries: u32,
-    /// First retry delay; doubles on each further retry up to `max_delay_secs`.
+    /// First retry delay. Doubles on each retry up to `max_delay_secs`.
     pub base_delay_secs: u64,
     pub max_delay_secs: u64,
     /// Also rejoin when presence says the account left the game while the
@@ -133,12 +129,10 @@ impl AfkKey {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppTheme {
-    /// Grey; follows the Windows light/dark setting.
+    /// Gray. Follows the Windows light/dark setting.
     #[default]
     Default,
-    /// The 2011 Roblox website.
     Classic,
-    /// Dark variant of `Classic`.
     ClassicDark,
 }
 
@@ -156,9 +150,7 @@ impl AppTheme {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AfkMode {
-    /// Post key messages straight to the window; focus never changes.
     Background,
-    /// Focus each window for a moment and send real input.
     Focus,
 }
 
@@ -171,11 +163,9 @@ impl AfkMode {
     }
 }
 
-/// How many places the game history keeps.
 pub const MAX_RECENT_PLACES: usize = 12;
 
 impl Config {
-    /// Moves `place_id` to the front of the game history.
     pub fn remember_place(&mut self, place_id: u64) {
         self.recent_places.retain(|p| *p != place_id);
         self.recent_places.insert(0, place_id);

@@ -14,8 +14,8 @@ pub mod window_group;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 
-/// Result slot for a background task started from the UI. The UI polls
-/// `take()` each frame; the task wakes the UI when it finishes.
+/// Result slot for a background task. The UI polls `take()` each frame and
+/// the task wakes the UI when done.
 pub struct Pending<T>(Arc<Mutex<Option<T>>>);
 
 impl<T: Send + 'static> Pending<T> {
@@ -36,7 +36,6 @@ impl<T: Send + 'static> Pending<T> {
     }
 }
 
-/// Polls an optional pending task; returns its result once and clears the slot.
 pub fn poll<T: Send + 'static>(slot: &mut Option<Pending<T>>) -> Option<T> {
     let v = slot.as_ref()?.take();
     if v.is_some() {
@@ -50,7 +49,7 @@ pub fn error_label(ui: &mut egui::Ui, msg: &str) {
 }
 
 /// HTTP image loader that lowercases the response MIME type. Roblox's CDN
-/// serves thumbnails as `image/Png`, which the image loader doesn't recognise.
+/// serves thumbnails as `image/Png`, which the image loader doesn't recognize.
 pub struct HttpLoader(egui_extras::loaders::http_loader::EhttpLoader);
 
 impl HttpLoader {

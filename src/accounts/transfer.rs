@@ -1,8 +1,6 @@
 //! Export / import file for moving accounts and settings to another PC.
-//!
-//! Layout: `MAGIC (6 bytes) || salt || nonce || AES-256-GCM ciphertext`, keyed
-//! from a password with Argon2 (same as a password-protected `accounts.dat`).
-//! The decrypted payload is JSON (`Bundle`).
+
+//! Layout: `MAGIC (6 bytes) || salt || nonce || AES-256-GCM ciphertext`, password-keyed with Argon2.
 
 use std::path::{Path, PathBuf};
 

@@ -1,7 +1,4 @@
-//! Freeze watchdog for a window group. A background thread checks that the
-//! UI thread keeps running and that the bar and each client answer messages.
-//! When something stalls it logs who holds mouse capture, focus and menu or
-//! move mode, which is what usually explains a freeze.
+//! Freeze watchdog for a window group: logs who holds capture, focus and move mode when the UI thread or a client stalls.
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,12 +25,10 @@ fn start_time() -> Instant {
 /// Milliseconds since start when the UI thread last ran a frame.
 static HEARTBEAT: AtomicU64 = AtomicU64::new(0);
 
-/// Called once per UI frame.
 pub fn beat() {
     HEARTBEAT.store(start_time().elapsed().as_millis() as u64, Ordering::Relaxed);
 }
 
-/// Window handles are kept as isize so they can cross threads.
 type Targets = Vec<(String, isize)>;
 
 pub struct Watch {
@@ -51,7 +46,6 @@ impl Watch {
         Self { stop, targets }
     }
 
-    /// The windows to check, with a name for the log.
     pub fn set_targets(&self, targets: Vec<(String, HWND)>) {
         *self.targets.lock().unwrap() = targets.into_iter().map(|(n, h)| (n, h.0 as isize)).collect();
     }
@@ -69,8 +63,8 @@ fn hwnd(v: isize) -> HWND {
 
 fn answers(h: HWND) -> bool {
     let mut result = 0usize;
-    // SAFETY: WM_NULL does nothing; the call times out if the window's
-    // thread is busy, and fails on a stale handle.
+    // SAFETY: WM_NULL does nothing. The call times out if the window's
+    // thread is busy and fails on a stale handle.
     let r =
         unsafe { SendMessageTimeoutW(h, WM_NULL, WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, REPLY_MS, Some(&mut result)) };
     r.0 != 0
@@ -127,7 +121,6 @@ fn flag_names(info: &GUITHREADINFO) -> String {
     if set.is_empty() { "none".into() } else { set.join(", ") }
 }
 
-/// Logs input state for each target's thread and the foreground window.
 fn dump(targets: &Mutex<Targets>) {
     let mut list = targets.lock().unwrap().clone();
     // SAFETY: no preconditions.
@@ -136,7 +129,7 @@ fn dump(targets: &Mutex<Targets>) {
     let mut seen = HashSet::new();
     for (name, h) in list {
         let mut pid = 0u32;
-        // SAFETY: pid is valid for writes; a stale handle returns 0.
+        // SAFETY: pid is valid for writes. A stale handle returns 0.
         let tid = unsafe { GetWindowThreadProcessId(hwnd(h), Some(&mut pid)) };
         if tid == 0 || !seen.insert(tid) {
             continue;

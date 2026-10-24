@@ -1,6 +1,5 @@
-//! Friends tab: the online friends of the selected accounts. Joining one
-//! launches the selected accounts following that friend, the way the
-//! website's Join button does.
+//! Friends tab: online friends of the selected accounts. Joining one launches
+//! the selected accounts into that friend's game, like the website's Join button.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,16 +15,14 @@ use crate::roblox_api::friends::{self, Friend};
 use crate::roblox_api::presence::PresenceType;
 
 const ROW_HEIGHT: f32 = 26.0;
-/// Pause between accounts: the friends API rate-limits hard.
+/// Pause between accounts, since the friends API rate-limits hard.
 const ACCOUNT_PAUSE: Duration = Duration::from_millis(800);
 
 struct Row {
     friend: Friend,
-    /// Labels of the accounts this is a friend of.
     of: Vec<String>,
 }
 
-/// Friends found, and accounts whose list couldn't be loaded.
 type LoadResult = (Vec<Row>, Vec<String>);
 
 #[derive(Default)]
@@ -169,14 +166,14 @@ impl State {
                     }
                 }
             }
-            // Friends in a game first.
+            // In-game friends first.
             rows.sort_by_key(|r| (r.friend.presence.kind != PresenceType::InGame, r.friend.name.to_lowercase()));
             (rows, failed)
         }));
     }
 }
 
-/// Joinable: in a game whose place is visible.
+/// In a game whose place is visible.
 fn joinable(row: &Row) -> bool {
     row.friend.presence.kind == PresenceType::InGame && row.friend.presence.place_id.is_some()
 }

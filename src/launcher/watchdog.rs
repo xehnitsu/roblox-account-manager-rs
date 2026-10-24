@@ -18,7 +18,6 @@ use crate::roblox_api::presence::{PresenceType, presence};
 pub enum Status {
     Launching,
     Running,
-    /// Launched, but no new client process was detected, so it can't be watched.
     NoProcess,
     WaitingRetry,
     GaveUp,
@@ -33,16 +32,13 @@ pub struct Session {
     pub id: u64,
     pub account_id: Uuid,
     pub label: String,
-    /// What the user asked for.
     pub target: LaunchTarget,
-    /// Server the client was last seen in (from presence); used to rejoin the same server.
+    /// Server the client was last seen in (from presence), used to rejoin it.
     pub job_id: Option<String>,
     /// Place of `job_id`. Differs from the target place after an in-game teleport.
     pub job_place_id: Option<u64>,
     pub process: Option<(u32, u64)>,
-    /// Kept open to read the exit code once the client exits.
     pub handle: Option<ProcessHandle>,
-    /// Set when the app kills the client itself to restart it.
     pub restarting: bool,
     pub status: Status,
     pub retries: u32,
@@ -54,19 +50,15 @@ pub struct Session {
     /// The client's own log, once found. While it is, presence isn't polled.
     pub log: Option<client_log::Reader>,
     pub next_log_search: Option<Instant>,
-    /// From the log: the client is in a game right now.
     pub in_game: bool,
-    /// From the log: the player left the game themselves.
     pub left_game: bool,
     pub teleport_at: Option<Instant>,
     /// A disconnect waiting to be confirmed (a teleport also logs one).
     pub pending_drop: Option<(Instant, Drop)>,
     pub kick_message: Option<String>,
-    /// Why the client last dropped out of a game, for the Sessions tab.
     pub last_drop: Option<String>,
 }
 
-/// A disconnect counts once the client hasn't joined a new game this long after it.
 const DROP_GRACE: Duration = Duration::from_secs(8);
 
 impl Session {
@@ -195,7 +187,6 @@ pub fn stop_session(shared: &Shared, sid: u64) {
     });
 }
 
-/// Manual rejoin, e.g. after `GaveUp`.
 pub fn rejoin_now(shared: &Arc<Shared>, sid: u64) {
     shared.update_session(sid, |s| {
         s.retries = 0;
@@ -206,7 +197,6 @@ pub fn rejoin_now(shared: &Arc<Shared>, sid: u64) {
     shared.rt.spawn(async move { run_launch(s, sid).await });
 }
 
-/// Main watchdog loop: one tick per second.
 pub async fn run(shared: Arc<Shared>) {
     let mut last_afk = Instant::now();
     let mut mutex_retry = MutexRetry::default();
@@ -232,7 +222,6 @@ pub async fn run(shared: Arc<Shared>) {
 #[derive(Default)]
 struct MutexRetry {
     last_running: usize,
-    /// Attempts left after the last client closed.
     attempts_left: u32,
     last_attempt: Option<Instant>,
 }
@@ -266,7 +255,6 @@ impl MutexRetry {
     }
 }
 
-/// Returns how many Roblox clients are running.
 fn tick(shared: &Arc<Shared>) -> usize {
     let cfg = shared.config.lock().unwrap().auto_rejoin.clone();
     let alive = roblox_processes();
@@ -311,7 +299,7 @@ fn tick(shared: &Arc<Shared>) -> usize {
                         changed = true;
                     }
                     if s.target != LaunchTarget::Home && s.log.is_none() && !s.presence_inflight {
-                        // First look after 20 s to learn the job ID; then on the configured interval.
+                        // First look after 20 s to learn the job ID, then on the configured interval.
                         let every = if s.last_presence.is_none() {
                             Duration::from_secs(20)
                         } else {
@@ -353,8 +341,6 @@ fn tick(shared: &Arc<Shared>) -> usize {
     alive.len()
 }
 
-/// Looks for the logs of running clients that don't have one yet, at most
-/// every 10 s per client.
 fn find_logs(shared: &Shared, now: Instant) {
     let (pids, claimed): (Vec<u32>, Vec<std::path::PathBuf>) = {
         let mut sessions = shared.sessions.lock().unwrap();
@@ -364,7 +350,7 @@ fn find_logs(shared: &Shared, now: Instant) {
             .filter(|s| s.status == Status::Running && s.log.is_none())
             .filter(|s| s.next_log_search.is_none_or(|t| t <= now))
             .filter_map(|s| {
-                // A new client writes its log within seconds; look often at first.
+                // A new client writes its log within seconds, so look often at first.
                 let young = s.running_since.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(60));
                 s.next_log_search = Some(now + Duration::from_secs(if young { 2 } else { 10 }));
                 s.process.map(|p| p.0)

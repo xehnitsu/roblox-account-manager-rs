@@ -13,19 +13,16 @@ use serde_json::json;
 use super::games::{self, Server};
 use super::{check, client, send_with_csrf};
 
-/// Thumbnail batch requests take at most 100 entries.
 const BATCH: usize = 100;
 /// Pause between server pages to stay under Roblox's rate limit.
 const PAGE_DELAY: Duration = Duration::from_millis(750);
 
-/// Progress of a running search, shared with the UI.
 #[derive(Default)]
 pub struct Progress {
     pub servers_checked: AtomicUsize,
     pub cancel: AtomicBool,
 }
 
-/// Roblox user ID for a username (or the number itself if one is given).
 pub async fn user_id(name: &str) -> Result<(u64, String)> {
     #[derive(Deserialize)]
     struct User {
@@ -119,7 +116,6 @@ async fn headshot(user_id: u64) -> Result<String> {
     Err(anyhow!("could not get the user's avatar"))
 }
 
-/// Index of the server whose player token resolves to `target`, if any.
 async fn matching_server(tokens: &[(usize, &str)], target: &str) -> Result<Option<usize>> {
     let body: Vec<_> = tokens
         .iter()

@@ -11,6 +11,7 @@ mod macros;
 mod roblox_api;
 mod title_bar;
 mod ui;
+mod updater;
 mod webview;
 
 fn main() -> eframe::Result<()> {
@@ -18,6 +19,12 @@ fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some(webview::CHILD_FLAG) {
         std::process::exit(webview::child_main(args.get(2).map_or("", String::as_str)));
+    }
+    // Restarted after an update: let the old instance exit first.
+    if args.get(1).map(String::as_str) == Some(updater::WAIT_FLAG)
+        && let Some(pid) = args.get(2).and_then(|p| p.parse().ok())
+    {
+        updater::wait_for(pid);
     }
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().expect("tokio runtime");
     let handle = rt.handle().clone();
@@ -38,7 +45,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, handle)))),
     );
-    // Dropping the runtime stops background tasks; MultiInstance handles are
+    // Dropping the runtime stops background tasks. MultiInstance handles are
     // released when the process exits.
     drop(rt);
     result

@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use super::{LaunchTarget, placelauncher_url};
 
-/// The player the `roblox-player:` handler points to, i.e. the installed one.
 pub fn installed_player() -> Option<PathBuf> {
     let command =
         windows_registry::CLASSES_ROOT.open(r"roblox-player\shell\open\command").and_then(|k| k.get_string("")).ok()?;
@@ -23,7 +22,6 @@ fn exe_from_command(command: &str) -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
-/// `version-…` folder name the player lives in.
 pub fn version_of(exe: &Path) -> Option<String> {
     Some(exe.parent()?.file_name()?.to_str()?.to_owned())
 }
