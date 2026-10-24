@@ -1,6 +1,4 @@
-# Builds the app icon in the style of the Helium browser icon: a flat rounded
-# square with one centered glyph. The glyph is the people from the original
-# Roblox Account Manager icon (assets\source\team_KX4_icon.ico).
+# Builds the app icon: a flat rounded square with three people drawn on it.
 # Writes assets\icon.png (256 px, window icon) and assets\icon.ico (multi-size,
 # embedded in the exe). Run: powershell -File assets\make-icon.ps1
 Add-Type -AssemblyName System.Drawing
@@ -9,40 +7,10 @@ $back = [Drawing.Color]::FromArgb(255, 48, 48, 48)   # rounded square
 $fg = [Drawing.Color]::FromArgb(255, 78, 78, 78)     # people
 $margin = 0.03      # gap around the square, as a fraction of the icon size
 $radius = 0.225     # corner radius, as a fraction of the square size
-$glyphSize = 0.66   # glyph width, as a fraction of the icon size
+$glyphSize = 0.74   # glyph width, as a fraction of the icon size
+$gap = 0.045        # outline around the front person, as a fraction of the glyph width
 
 $dir = $PSScriptRoot
-$bytes = [IO.File]::ReadAllBytes((Join-Path $dir 'source\team_KX4_icon.ico'))
-
-# --- Take the 256 px frame (a PNG entry) from the source icon. ---
-$count = [BitConverter]::ToUInt16($bytes, 4)
-$big = $null
-for ($i = 0; $i -lt $count; $i++) {
-    $o = 6 + 16 * $i
-    if ($bytes[$o] -ne 0) { continue }   # width byte 0 means 256 px
-    $len = [int][BitConverter]::ToUInt32($bytes, $o + 8)
-    $off = [int][BitConverter]::ToUInt32($bytes, $o + 12)
-    $big = New-Object Drawing.Bitmap ([IO.MemoryStream]::new($bytes, $off, $len))
-}
-if (-not $big) { throw 'no 256 px frame in source icon' }
-
-# --- People are transparent cut-outs in a black disc. Use the inverse alpha
-# inside the disc (clear of its anti-aliased rim) as the glyph mask. ---
-$n = $big.Width; $c = ($n - 1) / 2.0; $inner = 0.9 * $n / 2.0
-$mask = New-Object Drawing.Bitmap $n, $n, ([Drawing.Imaging.PixelFormat]::Format32bppArgb)
-$minX = $n; $minY = $n; $maxX = 0; $maxY = 0
-for ($y = 0; $y -lt $n; $y++) {
-    for ($x = 0; $x -lt $n; $x++) {
-        $dx = $x - $c; $dy = $y - $c
-        if (($dx * $dx + $dy * $dy) -gt ($inner * $inner)) { continue }
-        $a = 255 - $big.GetPixel($x, $y).A
-        if ($a -le 8) { continue }
-        $mask.SetPixel($x, $y, [Drawing.Color]::FromArgb($a, $fg.R, $fg.G, $fg.B))
-        if ($x -lt $minX) { $minX = $x }; if ($x -gt $maxX) { $maxX = $x }
-        if ($y -lt $minY) { $minY = $y }; if ($y -gt $maxY) { $maxY = $y }
-    }
-}
-$crop = New-Object Drawing.Rectangle $minX, $minY, ($maxX - $minX + 1), ($maxY - $minY + 1)
 
 function New-RoundedRect([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
     $p = New-Object Drawing.Drawing2D.GraphicsPath
@@ -51,6 +19,18 @@ function New-RoundedRect([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) 
     $p.AddArc($x + $w - $d, $y, $d, $d, 270, 90)
     $p.AddArc($x + $w - $d, $y + $h - $d, $d, $d, 0, 90)
     $p.AddArc($x, $y + $h - $d, $d, $d, 90, 90)
+    $p.CloseFigure()
+    return $p
+}
+
+# A head and shoulders, `$s` tall-ish, centered on x = $cx, top at $top.
+# Height is 0.74 * $s, width 0.62 * $s.
+function New-Person([float]$cx, [float]$top, [float]$s) {
+    $p = New-Object Drawing.Drawing2D.GraphicsPath
+    $r = 0.17 * $s
+    $p.AddEllipse($cx - $r, $top, 2 * $r, 2 * $r)
+    $p.StartFigure()
+    $p.AddArc($cx - 0.31 * $s, $top + 0.40 * $s, 0.62 * $s, 0.68 * $s, 180, 180)
     $p.CloseFigure()
     return $p
 }
@@ -67,11 +47,19 @@ function New-IconFrame([int]$size) {
     $side = $size - 2 * $m
     $g.FillPath((New-Object Drawing.SolidBrush $back), (New-RoundedRect $m $m $side $side ($side * $radius)))
 
-    # Glyph centered, scaled by width, aspect ratio kept.
-    $gw = $size * $glyphSize
-    $gh = $gw * $crop.Height / $crop.Width
-    $dest = New-Object Drawing.RectangleF (($size - $gw) / 2), (($size - $gh) / 2), $gw, $gh
-    $g.DrawImage($mask, $dest, $crop, [Drawing.GraphicsUnit]::Pixel)
+    # Glyph units: the front person is 1 wide and 0.74 tall (see New-Person),
+    # the two behind it are 0.8 scale, so the group is 1.22 wide.
+    $u = $size * $glyphSize / 1.22
+    $cx = $size / 2
+    $oy = ($size - 0.74 * $u) / 2
+    $brush = New-Object Drawing.SolidBrush $fg
+    foreach ($dx in -0.36, 0.36) {
+        $g.FillPath($brush, (New-Person ($cx + $dx * $u) ($oy + 0.148 * $u) (0.8 * $u)))
+    }
+    $front = New-Person $cx $oy $u
+    $pen = New-Object Drawing.Pen $back, ($gap * $u * 2)
+    $g.DrawPath($pen, $front)
+    $g.FillPath($brush, $front)
     $g.Dispose()
     return $bmp
 }
