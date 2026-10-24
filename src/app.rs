@@ -156,8 +156,6 @@ pub async fn add_account_from_cookie(
     Ok(user.name)
 }
 
-/// Fetches avatars for accounts that don't have one (e.g. the thumbnail was
-/// still rendering when the account was added).
 /// Checks whether each account's cookie still works and marks the expired
 /// ones. Accounts that can't be checked (e.g. no network) keep their mark.
 pub async fn check_cookies(shared: Arc<Shared>, ids: Option<HashSet<Uuid>>) {
@@ -189,6 +187,8 @@ pub async fn check_cookies(shared: Arc<Shared>, ids: Option<HashSet<Uuid>>) {
     }
 }
 
+/// Fetches avatars for accounts that have none, e.g. when the thumbnail was
+/// still rendering when the account was added.
 pub async fn fill_missing_avatars(shared: Arc<Shared>) {
     let missing: Vec<(Uuid, u64)> = shared
         .accounts
@@ -273,7 +273,7 @@ pub struct App {
     macros_ui: ui::macros::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
-    /// Title bar colours last applied.
+    /// Title bar colors last applied.
     title_bar: Option<(egui::Color32, egui::Color32)>,
     /// The window size was checked after startup.
     size_checked: bool,
@@ -378,7 +378,7 @@ impl App {
 }
 
 impl App {
-    /// Resizes and centres the window if it opened smaller than the minimum
+    /// Resizes and centers the window if it opened smaller than the minimum
     /// size, which Windows otherwise only enforces once the user resizes it.
     fn fix_window_size(&mut self, ctx: &egui::Context) {
         let (inner, monitor) = ctx.input(|i| (i.viewport().inner_rect, i.viewport().monitor_size));
@@ -389,7 +389,7 @@ impl App {
             return;
         }
         let size = egui::Vec2::from(DEFAULT_SIZE);
-        log(format!("window opened at {:.0}x{:.0}; resizing to the default size", inner.width(), inner.height()));
+        log(format!("window opened at {:.0}x{:.0}, resizing to the default size", inner.width(), inner.height()));
         ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
         if let Some(monitor) = monitor {
             let pos = ((monitor - size) / 2.0).max(egui::Vec2::ZERO);
@@ -499,7 +499,7 @@ impl eframe::App for App {
         }
         self.add_ui.show(ui.ctx(), &self.shared);
 
-        // Ctrl +/- zooms too; remember whatever the user ends up with.
+        // Ctrl +/- also zoom. Save the result.
         let zoom = ui.ctx().zoom_factor();
         let changed = {
             let mut cfg = self.shared.config.lock().unwrap();
@@ -511,7 +511,7 @@ impl eframe::App for App {
             self.shared.save_config();
         }
 
-        // Session status changes come from background tasks; keep the view fresh.
+        // Background tasks change session status, so keep repainting.
         ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
     }
 }

@@ -29,7 +29,7 @@ pub struct ProcessHandle(Arc<Handle>);
 
 impl ProcessHandle {
     pub fn open(pid: u32) -> Option<Self> {
-        // SAFETY: plain FFI call; failure returns an error, not an invalid handle.
+        // SAFETY: plain FFI call. Failure returns an error, not an invalid handle.
         let h = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE, false, pid) }.ok()?;
         Some(Self(Arc::new(Handle(h))))
     }
@@ -37,7 +37,7 @@ impl ProcessHandle {
     /// Exit code, or `None` while the process is still running.
     pub fn exit_code(&self) -> Option<u32> {
         let mut code = 0u32;
-        // SAFETY: valid handle with query rights; `code` outlives the call.
+        // SAFETY: valid handle with query rights, and `code` outlives the call.
         unsafe { GetExitCodeProcess(self.0.0, &mut code) }.ok()?;
         (code != STILL_ACTIVE.0 as u32).then_some(code)
     }

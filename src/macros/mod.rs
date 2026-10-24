@@ -1,5 +1,5 @@
-//! TinyTask-style macros: record mouse and keyboard input, then play it back,
-//! either on screen or as window messages to Roblox windows in the background.
+//! TinyTask-style macros: record mouse and keyboard input, then play it back
+//! as real input.
 //!
 //! Mouse positions are stored as a fraction of the window's client area, so a
 //! recording plays back in windows of any size.

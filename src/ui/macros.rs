@@ -1,4 +1,4 @@
-//! Macros tab: record, name and play back TinyTask-style macros.
+//! Macros tab: record and play back TinyTask-style macros.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ impl Default for State {
 }
 
 impl State {
-    /// Handles the F8/F9 hotkeys. Call every frame, whichever tab is open.
+    /// Handles the F8/F9 hotkeys. Call every frame.
     pub fn poll(&mut self, ctx: &egui::Context, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) {
         let keys = recorder::take_hotkeys();
         if keys & recorder::RECORD_PRESSED != 0 {
@@ -67,7 +67,7 @@ impl State {
         }
         let events = recorder::finish();
         if events.is_empty() {
-            self.error = Some("nothing was recorded. Switch to the game window after starting.".into());
+            self.error = Some("nothing was recorded, switch to the game window after starting".into());
             return;
         }
         let name = (1..).map(|n| format!("Macro {n}")).find(|n| !self.macros.iter().any(|m| &m.name == n)).unwrap();
@@ -185,7 +185,9 @@ impl State {
         ui.separator();
 
         if self.macros.is_empty() {
-            ui.weak("No macros yet. Press Record (or F8), switch to the game, do your thing, then press F8 again.");
+            ui.weak(
+                "No macros yet. Press Record (or F8), switch to the game, perform the actions, then press F8 again.",
+            );
             return;
         }
         if let Some(m) = self.selected.and_then(|i| self.macros.get_mut(i)) {

@@ -1,7 +1,6 @@
 //! Lists every place in a game (universe), like the original account
-//! manager's Universe tab. Games with several places (e.g. separate worlds)
-//! only show their start place on the website. Games can also be searched
-//! by name.
+//! manager's Universe tab. The website only shows a game's start place, even
+//! with several places (e.g. separate worlds). Games can also be searched by name.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,7 +15,7 @@ use crate::launcher::{LaunchTarget, watchdog};
 use crate::roblox_api::games::{self, GameHit};
 
 enum Loaded {
-    /// Game name and its places as `(id, name)`.
+    /// Game name and its `(id, name)` places.
     Places(Option<String>, Vec<(u64, String)>),
     Search(Vec<GameHit>),
 }
@@ -29,7 +28,7 @@ pub struct State {
     places: Vec<(u64, String)>,
     selected: Option<u64>,
     results: Vec<GameHit>,
-    /// Showing search results rather than a game's places.
+    /// Showing search results instead of a game's places.
     show_results: bool,
     task: Option<Pending<anyhow::Result<Loaded>>>,
     error: Option<String>,
@@ -49,7 +48,7 @@ impl State {
         }
     }
 
-    /// Returns a place whose servers the user wants to see.
+    /// Returns a place whose servers should be shown.
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) -> Option<u64> {
         if let Some(r) = poll(&mut self.task) {
             match r {
@@ -103,7 +102,7 @@ impl State {
             return None;
         }
         if self.places.is_empty() {
-            ui.weak("Search a game by name, or enter any place of a game to list all of its places.");
+            ui.weak("Search a game by name, or enter any of its places to list them all.");
             return None;
         }
 
@@ -190,7 +189,7 @@ impl State {
         }));
     }
 
-    /// Search results. Opening one lists its places.
+    /// Search results.
     fn results_list(&mut self, ui: &mut egui::Ui, shared: &Shared) {
         if self.results.is_empty() {
             ui.weak("No games found.");

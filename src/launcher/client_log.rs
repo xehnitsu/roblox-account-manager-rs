@@ -125,7 +125,7 @@ fn line_thread(line: &str) -> Option<u32> {
 /// Owning process of every thread on the system.
 fn thread_owners() -> HashMap<u32, u32> {
     let mut owners = HashMap::new();
-    // SAFETY: standard Toolhelp snapshot walk; the handle is closed below.
+    // SAFETY: standard Toolhelp snapshot walk, handle closed below.
     unsafe {
         let Ok(snap) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) else { return owners };
         let mut entry = THREADENTRY32 { dwSize: std::mem::size_of::<THREADENTRY32>() as u32, ..Default::default() };

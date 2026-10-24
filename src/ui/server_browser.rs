@@ -40,7 +40,7 @@ pub struct State {
     find_name: String,
     finding: Option<(Pending<anyhow::Result<FindResult>>, Arc<Progress>)>,
     find_status: Option<String>,
-    /// Join the player's server with the selected accounts once found.
+    /// Join the player's server once found.
     join_found: bool,
     error: Option<String>,
 }
@@ -65,7 +65,7 @@ impl State {
         }
     }
 
-    /// Loads the servers of a place, e.g. one picked on the Universe tab.
+    /// Loads a place's servers.
     pub fn load(&mut self, shared: &Shared, place_id: u64) {
         self.place = place_id.to_string();
         self.servers.clear();
@@ -85,9 +85,9 @@ impl State {
         }));
     }
 
-    /// Searches with the cookie of a selected account, or any account.
-    /// Uses the player's online status when it shows their server, otherwise
-    /// scans the place they're in, or the entered place.
+    /// Searches with a selected account's cookie, or any account's. Uses the
+    /// player's online status if it shows their server, otherwise scans the
+    /// place they're in, or the entered place.
     fn find(&mut self, shared: &Shared, place_id: Option<u64>, selected: &HashSet<Uuid>, join: bool) {
         self.join_found = join;
         self.error = None;
@@ -244,7 +244,7 @@ impl State {
         let Some(place_id) = self.loaded_place else { return };
         ui.horizontal_wrapped(|ui| {
             ui.strong(self.place_name.clone().unwrap_or_else(|| format!("Place {place_id}")));
-            ui.label(format!("— {} server(s) loaded", self.servers.len()));
+            ui.label(format!("{} server(s) loaded", self.servers.len()));
             ui.label("Sort:");
             ui.radio_value(&mut self.sort, Sort::Ping, "Ping");
             ui.radio_value(&mut self.sort, Sort::Players, "Most players");
@@ -255,7 +255,7 @@ impl State {
             Sort::Players => self.servers.sort_by_key(|s| std::cmp::Reverse(s.playing)),
             Sort::Free => self.servers.sort_by_key(|s| s.playing as i64 - s.max_players as i64),
         }
-        ui.weak("Region is not part of Roblox's public server list API, so it isn't shown. Ping is measured by Roblox from the server's side.");
+        ui.weak("Region isn't in Roblox's public server list API. Ping is measured by Roblox on the server side.");
 
         let mut join_job = None;
         if self.selected_server.as_ref().is_some_and(|id| !self.servers.iter().any(|s| &s.id == id)) {
@@ -280,7 +280,7 @@ impl State {
                 let (inner, resp) = rows::row(ui, i, ROW_HEIGHT, selected, egui::Sense::click(), true);
                 if ui.is_rect_visible(resp.rect) {
                     let spans = rows::spans(inner, &cols);
-                    // A server found through online status has no player count.
+                    // A server found via online status has no player count.
                     let players =
                         if s.max_players == 0 { "–".to_owned() } else { format!("{}/{}", s.playing, s.max_players) };
                     let ping = s.ping.map(|p| format!("{p} ms")).unwrap_or_else(|| "–".into());

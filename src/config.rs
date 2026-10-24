@@ -77,7 +77,7 @@ impl Default for MultiInstanceConfig {
 pub struct AutoRejoinConfig {
     pub enabled: bool,
     pub max_retries: u32,
-    /// First retry delay; doubles on each further retry up to `max_delay_secs`.
+    /// First retry delay. Doubles on each retry up to `max_delay_secs`.
     pub base_delay_secs: u64,
     pub max_delay_secs: u64,
     /// Also rejoin when presence says the account left the game while the
@@ -136,7 +136,7 @@ impl AfkKey {
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AppTheme {
-    /// Grey; follows the Windows light/dark setting.
+    /// Gray. Follows the Windows light/dark setting.
     #[default]
     Default,
     /// The 2011 Roblox website.
@@ -159,7 +159,7 @@ impl AppTheme {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AfkMode {
-    /// Post key messages straight to the window; focus never changes.
+    /// Post key messages straight to the window without changing focus.
     Background,
     /// Focus each window for a moment and send real input.
     Focus,

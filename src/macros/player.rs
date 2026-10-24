@@ -1,12 +1,10 @@
-//! Plays a macro back on its own thread, with real input (`SendInput`).
-//! Roblox ignores input sent to a window that isn't in front, so there is no
-//! way to drive several Roblox windows at once; this plays the macro in one
-//! window at a time instead.
+//! Plays a macro on its own thread with real input (`SendInput`). Roblox
+//! ignores input to a window that isn't in front, so several windows can't be
+//! driven at once. The macro plays in one window at a time instead.
 //!
 //! - Screen: plays once, on whatever window is currently in front.
-//! - EachWindow: brings each of `pids`'s windows to the front in turn, plays
-//!   the macro there, then moves to the next. The previously active window
-//!   is restored once every window has had its turn.
+//! - EachWindow: brings each of `pids`'s windows to the front in turn and plays
+//!   the macro there. The previously active window is restored at the end.
 //!
 //! Keys and buttons still held when playback stops are released.
 
@@ -46,7 +44,7 @@ pub struct Options {
     pub speed: f32,
 }
 
-/// A running playback. Dropping it does not stop it, call `stop`.
+/// A running playback. Dropping it doesn't stop it, call `stop`.
 pub struct Playback {
     stop: Arc<AtomicBool>,
     done: Arc<AtomicBool>,
@@ -68,8 +66,8 @@ impl Playback {
     }
 }
 
-/// Starts playing `m`. In `EachWindow` mode it cycles through the windows of
-/// `pids`, one at a time; `pids` is unused in `Screen` mode.
+/// Starts playing `m`. `EachWindow` mode cycles through the windows of `pids`.
+/// `pids` is unused in `Screen` mode.
 pub fn play(m: Macro, opts: Options, pids: HashSet<u32>, ctx: egui::Context) -> Playback {
     let stop = Arc::new(AtomicBool::new(false));
     let done = Arc::new(AtomicBool::new(false));
@@ -118,10 +116,10 @@ pub fn play(m: Macro, opts: Options, pids: HashSet<u32>, ctx: egui::Context) -> 
     playback
 }
 
-/// Plays every event of `m` once, at `speed`, into `target` (or, when None,
-/// the first window other than this app that is in front). Returns false if
-/// `stop` fired or another window came to the front partway through; the
-/// latter also sets `stop`, so the macro never types into the wrong window.
+/// Plays `m` once at `speed` into `target` (or, if None, the first foreground
+/// window that isn't this app). Returns false if `stop` fired or another
+/// window came to the front midway. The latter also sets `stop`, so the macro
+/// never types into the wrong window.
 fn play_once(m: &Macro, speed: f32, stop: &AtomicBool, mut target: Option<HWND>) -> bool {
     let mut held = Held::default();
     let start = Instant::now();
@@ -154,9 +152,9 @@ fn play_once(m: &Macro, speed: f32, stop: &AtomicBool, mut target: Option<HWND>)
 }
 
 /// Brings `hwnd` to the front, runs `f`, then restores its minimized state.
-/// Does nothing (and `f` plays wherever focus already is) if the switch fails.
+/// If the switch fails, `f` plays wherever focus already is.
 fn with_focus(hwnd: HWND, f: impl FnOnce() -> bool) -> bool {
-    // SAFETY: plain window calls; a stale handle just makes them fail.
+    // SAFETY: plain window calls. A stale handle just makes them fail.
     unsafe {
         let was_min = IsIconic(hwnd).as_bool();
         if was_min {
@@ -173,8 +171,8 @@ fn with_focus(hwnd: HWND, f: impl FnOnce() -> bool) -> bool {
     }
 }
 
-/// Keys and mouse buttons a macro is currently holding down, so they can be
-/// released if playback stops, or a window switch happens, partway through.
+/// Keys and buttons currently held down, so they can be released if playback
+/// stops or the window switches midway.
 #[derive(Default)]
 struct Held {
     keys: HashSet<(u16, u16, bool)>,
@@ -213,8 +211,8 @@ impl Held {
 }
 
 fn send(mut kind: Kind) {
-    // Never click or type into this app, e.g. right after pressing Play. Key
-    // and button releases still go out so nothing stays held down.
+    // Never click or type into this app (e.g. right after pressing Play).
+    // Releases still go out so nothing stays held.
     if recorder::target_window().is_none() {
         match &mut kind {
             Kind::Key { up: true, .. } => {}
@@ -224,7 +222,7 @@ fn send(mut kind: Kind) {
     }
     let input = match kind {
         Kind::Key { vk, scan, extended, up } => {
-            // Games read scan codes, so send those when the key has one.
+            // Games read scan codes, so use them when available.
             let mut flags = if scan != 0 { KEYEVENTF_SCANCODE } else { KEYBD_EVENT_FLAGS(0) };
             if extended {
                 flags |= KEYEVENTF_EXTENDEDKEY;
@@ -294,8 +292,8 @@ fn mouse_in_place(flags: MOUSE_EVENT_FLAGS) -> INPUT {
     }
 }
 
-/// Client-area point for a fraction of the window's client size. A negative
-/// fraction (a release at the end) uses the window's center.
+/// Client-area point for a fraction of the window's size. A negative fraction
+/// (a release at the end) means the window center.
 fn to_fraction_point(hwnd: HWND, x: f32, y: f32) -> windows::Win32::Foundation::POINT {
     use windows::Win32::Foundation::{POINT, RECT};
     use windows::Win32::UI::WindowsAndMessaging::GetClientRect;

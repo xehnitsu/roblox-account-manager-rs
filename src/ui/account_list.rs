@@ -17,7 +17,7 @@ use crate::launcher::{TargetInput, game_input, input_place_id, resolve_target, w
 
 pub struct State {
     pub selected: HashSet<Uuid>,
-    /// Set when the user picks an entry from the "Add account" menu.
+    /// Set when an entry is picked from the "Add account" menu.
     pub request_add: Option<AddMode>,
     filter: String,
     place: String,
@@ -27,16 +27,14 @@ pub struct State {
     refreshing: Option<Pending<(usize, usize)>>,
     error: Option<String>,
     confirm_remove: bool,
-    /// Last plainly clicked account; Shift+click selects the range from here.
+    /// Last plain-clicked account, the anchor for Shift+click ranges.
     anchor: Option<Uuid>,
-    /// Accounts being dragged to a new position.
     dragging: Option<HashSet<Uuid>>,
     new_group: String,
     avatars_checked: bool,
-    /// Tickets were prefetched for the current hover over Launch.
+    /// Tickets were prefetched for this hover over Launch.
     prefetched: bool,
-    /// Place ID in the place field and when it last changed, so the game name
-    /// is looked up after typing pauses.
+    /// Place field text and when it last changed, so the lookup waits for typing to pause.
     typed: (Option<u64>, std::time::Instant),
 }
 
@@ -52,8 +50,7 @@ struct Row {
     notes: String,
 }
 
-/// Moves the `moving` items, keeping their order, in front of `before`
-/// (or to the end).
+/// Moves `moving` in front of `before` (or to the end), keeping their order.
 pub fn reorder(items: &mut Vec<Account>, moving: &HashSet<Uuid>, before: Option<Uuid>) {
     let (moved, mut rest): (Vec<Account>, Vec<Account>) = items.drain(..).partition(|a| moving.contains(&a.id));
     let at = before.and_then(|b| rest.iter().position(|a| a.id == b)).unwrap_or(rest.len());
@@ -61,8 +58,8 @@ pub fn reorder(items: &mut Vec<Account>, moving: &HashSet<Uuid>, before: Option<
     *items = rest;
 }
 
-/// Groups in priority order: the saved order first, then any other groups
-/// alphabetically. Ungrouped accounts aren't listed; they always come last.
+/// Groups in priority order: saved order first, then others alphabetically.
+/// Ungrouped accounts always come last and aren't listed.
 pub fn group_order(saved: &[String], accounts: &[Account]) -> Vec<String> {
     let existing: std::collections::BTreeSet<&str> =
         accounts.iter().map(|a| a.group.as_str()).filter(|g| !g.is_empty()).collect();
@@ -73,8 +70,7 @@ pub fn group_order(saved: &[String], accounts: &[Account]) -> Vec<String> {
     order
 }
 
-/// Accounts in display order: by group priority, keeping the saved order
-/// within a group.
+/// Accounts by group priority, keeping the saved order within a group.
 pub fn sorted<'a>(accounts: &'a [Account], saved_order: &[String]) -> Vec<&'a Account> {
     let order = group_order(saved_order, accounts);
     let rank = |g: &str| order.iter().position(|o| o == g).unwrap_or(usize::MAX);
@@ -197,8 +193,7 @@ impl State {
             let btn =
                 super::theme::play_button(ui.ctx(), label).min_size(egui::vec2(ui.available_width() - 24.0, 28.0));
             let resp = ui.add_enabled(n > 0 && !busy, btn);
-            // Fetch login tickets while the pointer is on the button, so the
-            // click doesn't wait for them.
+            // Prefetch login tickets on hover so the click doesn't wait.
             if resp.hovered() && !self.prefetched {
                 self.prefetched = true;
                 self.prefetch_tickets(shared);
@@ -214,7 +209,7 @@ impl State {
         });
         let opening = self.opening_browser.is_some();
         ui.horizontal(|ui| {
-            // Split one rect as wide as the Launch button, so both edges line up.
+            // One rect as wide as Launch, so the edges line up.
             let size = egui::vec2(ui.available_width() - 24.0, ui.spacing().interact_size.y);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
             let gap = ui.spacing().item_spacing.x / 2.0;
@@ -247,7 +242,7 @@ impl State {
         self.game_history(ui, shared);
     }
 
-    /// Recently launched games; clicking one puts it in the place field.
+    /// Recent games. Clicking one fills the place field.
     fn game_history(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let recent = shared.config.lock().unwrap().recent_places.clone();
         if recent.is_empty() {
@@ -309,7 +304,7 @@ impl State {
         }
     }
 
-    /// Game icon and name for the place field, looked up once typing pauses.
+    /// Game icon and name for the place field.
     fn game_card(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
         let place_id = input_place_id(&self.place);
         if self.typed.0 != place_id {
@@ -370,13 +365,12 @@ impl State {
         }
     }
 
-    /// Launches the selected accounts into the game in the place field, or
-    /// to the Roblox home screen.
+    /// Launches the selected accounts into the place field's game, or the Roblox home.
     fn launch(&mut self, shared: &Arc<Shared>, home: bool) {
         self.error = None;
         shared.config.lock().unwrap().last_place_id = self.place.clone();
         shared.save_config();
-        // Keep the list order so launches happen top to bottom.
+        // Launch top to bottom.
         let ids = self.selected_in_order(shared);
         let input = if home { Ok(TargetInput::Home) } else { game_input(&self.place, &self.job_id) };
         let input = match input {
@@ -424,14 +418,14 @@ impl State {
         }));
     }
 
-    /// Selected accounts, top to bottom as the list shows them.
+    /// Selected accounts in list order.
     fn selected_in_order(&self, shared: &Shared) -> Vec<Uuid> {
         let saved_order = shared.config.lock().unwrap().group_order.clone();
         let accounts = shared.accounts.lock().unwrap();
         sorted(&accounts, &saved_order).into_iter().filter(|a| self.selected.contains(&a.id)).map(|a| a.id).collect()
     }
 
-    /// Prefetches tickets for the first few selected accounts, in list order.
+    /// Prefetches tickets for the first few selected accounts.
     fn prefetch_tickets(&self, shared: &Arc<Shared>) {
         let cookies: Vec<String> = shared
             .accounts
@@ -499,8 +493,7 @@ impl State {
             }
         }
         ui.separator();
-        // Clicking the "New group" field must not close the menu; the entries
-        // close it themselves.
+        // Clicking the "New group" field must keep the menu open. The entries close it.
         let keep_open =
             egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
         egui::containers::menu::SubMenuButton::new("Group").config(keep_open.clone()).ui(ui, |ui| {
@@ -592,9 +585,8 @@ impl State {
         }
         let order: Vec<Uuid> = rows.iter().map(|r| r.id).collect();
 
-        // Account (after the avatar), group and notes. Account is 24 characters
-        // wide unless a longer name needs more, group fits the longest group,
-        // and notes take the rest.
+        // Account is 24 characters wide unless a name needs more, group fits the
+        // longest group, notes take the rest.
         let font = egui::TextStyle::Body.resolve(ui.style());
         let (account_width, group_width) = ui.fonts_mut(|f| {
             let mut width = |text: &str| f.layout_no_wrap(text.to_owned(), font.clone(), egui::Color32::WHITE).size().x;
@@ -623,7 +615,7 @@ impl State {
                     if let Some(url) = &row.avatar {
                         egui::Image::new(url.as_str()).corner_radius(4.0).paint_at(ui, avatar);
                     } else {
-                        // No thumbnail (e.g. Roblox moderated it): show the first letter.
+                        // No thumbnail (e.g. moderated): show the first letter.
                         let initial = row.label.chars().next().unwrap_or('?').to_uppercase().to_string();
                         ui.painter().rect_filled(avatar, 4.0, ui.visuals().widgets.inactive.bg_fill);
                         ui.painter().text(
@@ -668,7 +660,7 @@ impl State {
         });
     }
 
-    /// Draws the drop marker while dragging and moves the rows on release.
+    /// Draws the drop marker and moves the rows on release.
     fn drag_rows(&mut self, ui: &mut egui::Ui, shared: &Shared, rows: &[Row], rects: &[egui::Rect]) {
         let Some(moving) = &self.dragging else { return };
         let released = ui.input(|i| i.pointer.any_released());
@@ -702,19 +694,17 @@ impl State {
         }
         if released || !ui.input(|i| i.pointer.any_down()) {
             self.dragging = None;
-            // Redraw without the drop marker.
             ui.ctx().request_repaint();
         }
     }
 }
 
-/// Lists the groups with buttons to move them up or down in priority.
+/// Groups with buttons to change their priority.
 fn group_order_menu(ui: &mut egui::Ui, shared: &Shared) {
     let saved_order = shared.config.lock().unwrap().group_order.clone();
     let mut order = group_order(&saved_order, &shared.accounts.lock().unwrap());
     let mut swap = None;
-    // A grid sizes to its content. A right-to-left layout would stretch the
-    // menu across the whole window.
+    // A grid sizes to its content. A right-to-left layout would stretch the menu to the window width.
     egui::Grid::new("group_order").num_columns(2).show(ui, |ui| {
         for (i, g) in order.iter().enumerate() {
             ui.label(g);

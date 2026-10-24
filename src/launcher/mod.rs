@@ -115,7 +115,7 @@ pub fn parse_private_link(input: &str) -> Result<PrivateLink> {
 }
 
 /// Reads the launch panel's two fields: the first holds a place ID, game URL
-/// or private server link; the optional second a job ID.
+/// or private server link. The optional second is a job ID.
 pub fn game_input(place_or_link: &str, job_id: &str) -> Result<TargetInput> {
     let (first, job_id) = (place_or_link.trim(), job_id.trim());
     if first.is_empty() {
@@ -155,7 +155,7 @@ pub async fn resolve_target(cookie: &str, input: &TargetInput) -> Result<LaunchT
     })
 }
 
-/// The join URL the client requests a server from; None for Home.
+/// The join URL the client requests a server from. None for Home.
 fn placelauncher_url(target: &LaunchTarget, tracker_id: u64) -> Option<String> {
     if let LaunchTarget::Follow { user_id, .. } = target {
         return Some(format!(
@@ -251,7 +251,7 @@ pub async fn launch(
     let (ticket, latest) = tokio::join!(auth::take_ticket(&account.cookie), crate::roblox_api::latest_player_version());
     let ticket = ticket.with_context(|| format!("auth ticket for {}", account.username))?;
     let ticket_ms = started.elapsed().as_millis();
-    // Give the previous client time to settle. Only queued launches wait; the
+    // Give the previous client time to settle. Only queued launches wait, and the
     // ticket request above already used part of the time.
     let (delay, join) = {
         let cfg = shared.config.lock().unwrap();
@@ -328,7 +328,7 @@ async fn spawn_player(exe: &Path, args: Vec<String>) -> Option<(u32, u64)> {
             return None;
         }
     };
-    // The process exists already; sysinfo only needs a moment to list it.
+    // The process exists already, sysinfo just needs a moment to list it.
     for _ in 0..40 {
         if let Some(p) = roblox_processes().into_iter().find(|p| p.0 == pid) {
             return Some(p);

@@ -1,9 +1,9 @@
-//! Records input with low-level keyboard and mouse hooks, and listens for the
+//! Records input with low-level keyboard and mouse hooks and listens for the
 //! global hotkeys (F8 record, F9 play). Both run on one thread with its own
-//! message loop. The hooks are only installed while recording.
+//! message loop. Hooks are installed only while recording.
 //!
-//! Input injected by other programs (including our own playback) and input
-//! while this app's window is in front (e.g. pressing Stop) is not recorded.
+//! Injected input (including our own playback) and input while this app's
+//! window is in front (e.g. pressing Stop) are not recorded.
 
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
@@ -85,7 +85,7 @@ pub fn start(ctx: egui::Context) {
     });
 }
 
-/// Hotkeys pressed since the last call (`RECORD_PRESSED`, `PLAY_PRESSED`).
+/// Hotkeys pressed since the last call.
 pub fn take_hotkeys() -> u8 {
     HOTKEYS.swap(0, Ordering::Relaxed)
 }

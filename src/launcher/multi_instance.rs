@@ -41,7 +41,7 @@ pub struct SingletonGuard {
     pub owned: bool,
 }
 
-// SAFETY: the mutex handles are only closed in Drop; kernel handles may be
+// SAFETY: the mutex handles are only closed in Drop, and kernel handles may be
 // used from any thread.
 unsafe impl Send for SingletonGuard {}
 
@@ -269,7 +269,7 @@ fn monitor_loop(exe: PathBuf, stop: Arc<AtomicBool>) {
         for &(pid, start) in &procs {
             let st = states.entry((pid, start)).or_insert_with(|| ProcState {
                 // Processes that already existed when monitoring began only
-                // need a quick check; new ones are watched for a few seconds
+                // need a quick check. New ones are watched for a few seconds
                 // because Roblox creates the singleton shortly after start.
                 required_scans: if first { 2 } else { 15 },
                 ..Default::default()

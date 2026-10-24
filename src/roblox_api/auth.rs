@@ -115,7 +115,7 @@ pub async fn auth_ticket(cookie: &str) -> Result<String> {
     })
     .await?;
     if matches!(resp.status(), StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN) {
-        bail!("Roblox rejected the cookie (HTTP {}); re-add the account", resp.status());
+        bail!("Roblox rejected the cookie (HTTP {}), re-add the account", resp.status());
     }
     let resp = check(resp).await?;
     resp.headers()
@@ -131,7 +131,7 @@ pub enum LoginOutcome {
         cookie: String,
     },
     /// Captcha, 2-step verification or another challenge. We never try to
-    /// solve these; the user logs in through their browser instead.
+    /// solve these. The user logs in through their browser instead.
     ChallengeRequired {
         kind: String,
     },

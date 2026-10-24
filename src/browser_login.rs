@@ -200,7 +200,7 @@ async fn fill(cdp: &mut Cdp, session: &str, user: &str, pass: &str) -> Result<bo
     Ok(true)
 }
 
-/// Focuses and empties an input; false if it isn't on the page (yet).
+/// Focuses and empties an input; false if it is not on the page yet.
 fn focus_script(id: &str) -> String {
     format!(
         r#"(function() {{

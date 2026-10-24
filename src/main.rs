@@ -45,7 +45,7 @@ fn main() -> eframe::Result<()> {
         options,
         Box::new(move |cc| Ok(Box::new(app::App::new(cc, handle)))),
     );
-    // Dropping the runtime stops background tasks; MultiInstance handles are
+    // Dropping the runtime stops background tasks. MultiInstance handles are
     // released when the process exits.
     drop(rt);
     result

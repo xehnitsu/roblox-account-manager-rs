@@ -122,7 +122,7 @@ pub fn install(bar: HWND) {
     });
     set_bool(bar, DWMWA_FORCE_ICONIC_REPRESENTATION);
     set_bool(bar, DWMWA_HAS_ICONIC_BITMAP);
-    // SAFETY: called on the UI thread that owns `bar`; the hook removes
+    // SAFETY: called on the UI thread that owns `bar`. The hook removes
     // itself when the window is destroyed.
     unsafe {
         let _ = SetWindowSubclass(bar, Some(bar_proc), SUBCLASS_ID, 0);
@@ -244,8 +244,7 @@ fn follow(x: i32, y: i32, width: i32) {
         let cells: Vec<Cell> = if same_size {
             s.offsets.iter().map(|o| Cell { x: x + o.x, y: y + o.y, ..*o }).collect()
         } else {
-            // The bar changed width: a rough grid now, the real tile follows
-            // from the UI.
+            // Width changed: use a rough grid now, the UI tiles properly later.
             grid(s.members.len(), x, y, width)
         };
         s.members.iter().zip(cells).map(|(&h, c)| (h, c, !same_size)).collect()
@@ -278,7 +277,7 @@ impl Dib {
             ..Default::default()
         };
         let mut bits = std::ptr::null_mut();
-        // SAFETY: `info` describes a valid 32-bit DIB; the DC and bitmap are
+        // SAFETY: `info` describes a valid 32-bit DIB. The DC and bitmap are
         // freed in Drop.
         unsafe {
             let bmp = CreateDIBSection(None, &info, DIB_RGB_COLORS, &mut bits, None, 0).ok()?;
@@ -290,7 +289,7 @@ impl Dib {
     }
 
     fn pixels(&mut self) -> &mut [u8] {
-        // SAFETY: flushes pending GDI drawing; `bits` points at w * h * 4
+        // SAFETY: flushes pending GDI drawing. `bits` points at w * h * 4
         // bytes owned by the DIB, which lives as long as self.
         unsafe {
             let _ = GdiFlush();
@@ -374,7 +373,7 @@ fn push(bar: HWND, snap: &Snapshot, max_w: i32, max_h: i32) -> windows::core::Re
     let scale = (max_w as f32 / snap.w as f32).min(max_h as f32 / snap.h as f32).min(1.0);
     let (w, h) = (((snap.w as f32 * scale) as i32).max(1), ((snap.h as f32 * scale) as i32).max(1));
     let mut out = Dib::new(w, h).ok_or_else(fail)?;
-    // SAFETY: both DCs are live DIB DCs; DWM copies the bitmap, so `out`
+    // SAFETY: both DCs are live DIB DCs. DWM copies the bitmap, so `out`
     // can be freed afterwards.
     unsafe {
         let _ = StretchBlt(out.dc, 0, 0, w, h, Some(src.dc), 0, 0, snap.w, snap.h, SRCCOPY);

@@ -35,7 +35,7 @@ pub struct Session {
     pub label: String,
     /// What the user asked for.
     pub target: LaunchTarget,
-    /// Server the client was last seen in (from presence); used to rejoin the same server.
+    /// Server the client was last seen in (from presence), used to rejoin it.
     pub job_id: Option<String>,
     /// Place of `job_id`. Differs from the target place after an in-game teleport.
     pub job_place_id: Option<u64>,
@@ -311,7 +311,7 @@ fn tick(shared: &Arc<Shared>) -> usize {
                         changed = true;
                     }
                     if s.target != LaunchTarget::Home && s.log.is_none() && !s.presence_inflight {
-                        // First look after 20 s to learn the job ID; then on the configured interval.
+                        // First look after 20 s to learn the job ID, then on the configured interval.
                         let every = if s.last_presence.is_none() {
                             Duration::from_secs(20)
                         } else {
@@ -364,7 +364,7 @@ fn find_logs(shared: &Shared, now: Instant) {
             .filter(|s| s.status == Status::Running && s.log.is_none())
             .filter(|s| s.next_log_search.is_none_or(|t| t <= now))
             .filter_map(|s| {
-                // A new client writes its log within seconds; look often at first.
+                // A new client writes its log within seconds, so look often at first.
                 let young = s.running_since.is_some_and(|t| now.saturating_duration_since(t) < Duration::from_secs(60));
                 s.next_log_search = Some(now + Duration::from_secs(if young { 2 } else { 10 }));
                 s.process.map(|p| p.0)

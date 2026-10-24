@@ -17,7 +17,7 @@ pub enum PresenceType {
 #[derive(Debug, Clone)]
 pub struct Presence {
     pub kind: PresenceType,
-    /// Place the user is in; differs from the launched place after a teleport.
+    /// Place the user is in. Differs from the launched place after a teleport.
     pub place_id: Option<u64>,
     /// Job ID of the server the user is in, when visible to the caller.
     pub job_id: Option<String>,

@@ -23,7 +23,7 @@ fn exe_from_command(command: &str) -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
-/// `version-…` folder name the player lives in.
+/// `version-...` folder name the player lives in.
 pub fn version_of(exe: &Path) -> Option<String> {
     Some(exe.parent()?.file_name()?.to_str()?.to_owned())
 }

@@ -49,7 +49,7 @@ fn target_text(s: &Session, shared: &Arc<Shared>) -> String {
     }
 }
 
-/// Still running or about to be, so it can be stopped.
+/// Running or about to run, so it can be stopped.
 fn is_active(s: &Session) -> bool {
     matches!(s.status, Status::Launching | Status::Running | Status::WaitingRetry | Status::NoProcess)
 }
@@ -62,13 +62,12 @@ pub struct State {
 }
 
 impl State {
-    /// Hands the grouped windows back before the app closes, so they don't
-    /// go down with the bar that owns them.
+    /// Releases grouped windows before exit so they don't close with the bar.
     pub fn ungroup(&mut self) {
         self.group = None;
     }
 
-    /// Runs every frame, whatever tab is open, so the group bar stays up.
+    /// Runs every frame on any tab so the group bar stays up.
     pub fn show_group(&mut self, ctx: &egui::Context, shared: &Arc<Shared>) {
         if let Some(g) = &mut self.group
             && !g.show(ctx, shared)

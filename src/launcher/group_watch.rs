@@ -69,8 +69,8 @@ fn hwnd(v: isize) -> HWND {
 
 fn answers(h: HWND) -> bool {
     let mut result = 0usize;
-    // SAFETY: WM_NULL does nothing; the call times out if the window's
-    // thread is busy, and fails on a stale handle.
+    // SAFETY: WM_NULL does nothing. The call times out if the window's
+    // thread is busy and fails on a stale handle.
     let r =
         unsafe { SendMessageTimeoutW(h, WM_NULL, WPARAM(0), LPARAM(0), SMTO_ABORTIFHUNG, REPLY_MS, Some(&mut result)) };
     r.0 != 0
@@ -136,7 +136,7 @@ fn dump(targets: &Mutex<Targets>) {
     let mut seen = HashSet::new();
     for (name, h) in list {
         let mut pid = 0u32;
-        // SAFETY: pid is valid for writes; a stale handle returns 0.
+        // SAFETY: pid is valid for writes. A stale handle returns 0.
         let tid = unsafe { GetWindowThreadProcessId(hwnd(h), Some(&mut pid)) };
         if tid == 0 || !seen.insert(tid) {
             continue;

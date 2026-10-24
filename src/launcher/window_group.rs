@@ -85,7 +85,7 @@ pub fn main_window(pid: u32) -> Option<HWND> {
 
 fn pid_of(hwnd: HWND) -> u32 {
     let mut pid = 0u32;
-    // SAFETY: pid is valid for writes; a stale handle leaves it 0.
+    // SAFETY: pid is valid for writes. A stale handle leaves it 0.
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     pid
 }
@@ -234,7 +234,7 @@ fn place(hwnd: HWND, c: Cell) {
 
 pub fn rect(hwnd: HWND) -> Cell {
     let mut r = RECT::default();
-    // SAFETY: r is valid for writes; a stale handle just fails.
+    // SAFETY: r is valid for writes. A stale handle just fails.
     let _ = unsafe { GetWindowRect(hwnd, &mut r) };
     Cell { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top }
 }
