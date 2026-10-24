@@ -30,6 +30,10 @@ const HOME_URL: &str = "https://www.roblox.com/home";
 const PROFILE_PREFIX: &str = "ramrs-webview-";
 const TICK: Duration = Duration::from_millis(500);
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+/// How long a session window waits for its cookie before loading anyway.
+const COOKIE_WAIT: Duration = Duration::from_secs(5);
+/// When a session window checks which page it ended up on.
+const LANDING_CHECK: Duration = Duration::from_secs(6);
 
 /// Whether the WebView2 runtime is installed.
 pub fn available() -> bool {
@@ -158,23 +162,49 @@ fn run_window(
             builder = builder.with_initialization_script(script.as_str());
         }
         let webview = builder.build(&window)?;
+        // WebView2 stores the cookie in the background, so loading right away
+        // can go out without it and land on the login page. Load once the
+        // cookie is visible.
+        let started = Instant::now();
+        let mut waiting = None;
         if let Some(value) = cookie {
-            let cookie = wry::cookie::Cookie::build((".ROBLOSECURITY", value))
-                .domain(".roblox.com")
-                .path("/")
-                .secure(true)
-                .http_only(true)
-                .build();
-            webview.set_cookie(&cookie)?;
-            webview.load_url(url)?;
+            set_session_cookie(&webview, value)?;
+            log(format!("[browser] cookie set, visible right away: {}", roblosecurity(&webview).is_some()));
+            waiting = Some(url);
         }
+        let mut loaded_at = None;
+        let mut checked = false;
 
         event_loop.run_return(|event, _, flow| {
             *flow = ControlFlow::WaitUntil(Instant::now() + TICK);
             match event {
                 Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
-                Event::NewEvents(StartCause::ResumeTimeReached { .. }) if on_tick(&webview) => {
-                    *flow = ControlFlow::Exit;
+                Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                    if let Some(u) = waiting {
+                        let visible = roblosecurity(&webview).is_some();
+                        if visible || started.elapsed() > COOKIE_WAIT {
+                            let ms = started.elapsed().as_millis();
+                            log(format!("[browser] loading after {ms} ms, cookie visible: {visible}"));
+                            let _ = webview.load_url(u);
+                            waiting = None;
+                            loaded_at = Some(Instant::now());
+                        }
+                    }
+                    if !checked && loaded_at.is_some_and(|t| t.elapsed() > LANDING_CHECK) {
+                        checked = true;
+                        let page = webview.url().unwrap_or_default();
+                        let lower = page.to_lowercase();
+                        if lower.contains("/login") || lower.contains("/newlogin") {
+                            log(format!(
+                                "[browser] Roblox sent the window to {page}, so it didn't accept the saved cookie"
+                            ));
+                        } else {
+                            log(format!("[browser] window is on {page}"));
+                        }
+                    }
+                    if on_tick(&webview) {
+                        *flow = ControlFlow::Exit;
+                    }
                 }
                 _ => {}
             }
@@ -183,6 +213,31 @@ fn run_window(
     })();
     remove_profile(&profile);
     result
+}
+
+/// Adds the `.ROBLOSECURITY` cookie for every roblox.com host. wry's
+/// `set_cookie` can't do this: the cookie crate drops the leading dot from the
+/// domain, and WebView2 then only sends the cookie to roblox.com itself, not
+/// www.roblox.com.
+fn set_session_cookie(webview: &WebView, value: &str) -> Result<()> {
+    use webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2_2;
+    use windows::core::{HSTRING, Interface as _};
+    use wry::WebViewExtWindows as _;
+
+    // SAFETY: plain COM calls on the window's own WebView2, on its thread.
+    unsafe {
+        let manager = webview.webview().cast::<ICoreWebView2_2>()?.CookieManager()?;
+        let cookie = manager.CreateCookie(
+            &HSTRING::from(".ROBLOSECURITY"),
+            &HSTRING::from(value),
+            &HSTRING::from(".roblox.com"),
+            &HSTRING::from("/"),
+        )?;
+        cookie.SetIsSecure(true)?;
+        cookie.SetIsHttpOnly(true)?;
+        manager.AddOrUpdateCookie(&cookie)?;
+    }
+    Ok(())
 }
 
 fn roblosecurity(webview: &WebView) -> Option<String> {
