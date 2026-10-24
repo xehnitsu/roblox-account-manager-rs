@@ -33,6 +33,8 @@ pub struct Config {
     /// UI zoom factor (Ctrl + / Ctrl - also change it).
     pub ui_scale: f32,
     pub theme: AppTheme,
+    /// Download and install new GitHub releases at startup.
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -48,6 +50,7 @@ impl Default for Config {
             group_order: Vec::new(),
             ui_scale: 1.0,
             theme: AppTheme::default(),
+            auto_update: true,
         }
     }
 }

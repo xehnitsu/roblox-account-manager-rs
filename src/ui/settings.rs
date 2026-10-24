@@ -158,6 +158,8 @@ impl State {
             });
 
             ui.separator();
+            updates_section(ui, &mut cfg, shared);
+            ui.separator();
             self.password_section(ui, shared);
             ui.separator();
             self.transfer_section(ui, shared);
@@ -327,4 +329,25 @@ fn pick_file(shared: &Shared, export: bool) -> Pending<Option<PathBuf>> {
         .ok()
         .flatten()
     })
+}
+
+fn updates_section(ui: &mut egui::Ui, cfg: &mut crate::config::Config, shared: &Arc<Shared>) {
+    use crate::updater::{self, Status};
+    ui.heading("Updates");
+    ui.checkbox(&mut cfg.auto_update, "Install new versions from GitHub at startup");
+    ui.horizontal(|ui| {
+        let status = updater::status();
+        let busy = matches!(status, Status::Checking | Status::Downloading(_));
+        if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
+            shared.rt.spawn(updater::run(ui.ctx().clone()));
+        }
+        ui.weak(match status {
+            Status::Idle => format!("Version {}", updater::CURRENT),
+            Status::Checking => "Checking...".into(),
+            Status::UpToDate => format!("Version {} is the latest", updater::CURRENT),
+            Status::Downloading(tag) => format!("Downloading {tag}..."),
+            Status::Ready(tag) => format!("{tag} installed, restart to use it"),
+            Status::Failed(e) => format!("Update failed: {e}"),
+        });
+    });
 }

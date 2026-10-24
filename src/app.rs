@@ -286,6 +286,7 @@ impl App {
         ui::HttpLoader::install(&cc.egui_ctx);
         let config = Config::load();
         crate::webview::remove_stale_profiles();
+        crate::updater::remove_old();
         ui::theme::apply(&cc.egui_ctx, config.theme);
         cc.egui_ctx.set_zoom_factor(config.ui_scale.clamp(0.5, 3.0));
         let shared = Arc::new(Shared {
@@ -317,6 +318,9 @@ impl App {
         shared.multi.lock().unwrap().apply(&config.multi_instance);
         rt.spawn(crate::launcher::watchdog::run(shared.clone()));
         crate::macros::recorder::start(cc.egui_ctx.clone());
+        if config.auto_update {
+            rt.spawn(crate::updater::run(cc.egui_ctx.clone()));
+        }
 
         Self {
             accounts_ui: ui::account_list::State::new(&config),
@@ -426,6 +430,14 @@ impl eframe::App for App {
                     ui.selectable_value(&mut self.tab, tab, name);
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if let crate::updater::Status::Ready(tag) = crate::updater::status()
+                        && ui.button(format!("Restart to update to {tag}")).clicked()
+                    {
+                        match crate::updater::restart() {
+                            Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                            Err(e) => log(format!("restarting failed: {e:#}")),
+                        }
+                    }
                     ui.weak(self.shared.multi.lock().unwrap().status());
                 });
             });
