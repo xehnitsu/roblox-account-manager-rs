@@ -178,7 +178,12 @@ fn run_window(
         event_loop.run_return(|event, _, flow| {
             *flow = ControlFlow::WaitUntil(Instant::now() + TICK);
             match event {
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    // WebView2 takes a moment to shut down, so hide the window
+                    // first instead of leaving it frozen on screen.
+                    window.set_visible(false);
+                    *flow = ControlFlow::Exit;
+                }
                 Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                     if let Some(u) = waiting {
                         let visible = roblosecurity(&webview).is_some();
