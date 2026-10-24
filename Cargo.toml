@@ -2,6 +2,7 @@
 name = "roblox-account-manager-rs"
 version = "0.1.3"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 aes-gcm = { version = "0.11.1", features = ["getrandom"] }
