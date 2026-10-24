@@ -20,8 +20,8 @@ use tao::dpi::LogicalSize;
 use tao::event::{Event, StartCause, WindowEvent};
 use tao::event_loop::{ControlFlow, EventLoopBuilder};
 use tao::platform::run_return::EventLoopExtRunReturn;
-use tao::window::{Icon, WindowBuilder};
-use wry::{WebContext, WebView, WebViewBuilder};
+use tao::window::{Icon, Theme as WindowTheme, WindowBuilder};
+use wry::{Theme, WebContext, WebView, WebViewBuilder, WebViewBuilderExtWindows as _};
 
 use crate::applog::log;
 
@@ -150,14 +150,14 @@ fn run_window(
             .with_title(title)
             .with_inner_size(LogicalSize::new(900.0, 860.0))
             .with_window_icon(icon())
+            .with_theme(Some(WindowTheme::Dark))
             .build(&event_loop)?;
         let mut context = WebContext::new(Some(profile.clone()));
         // With a cookie, start blank so the first request is already logged in.
-        let mut builder = WebViewBuilder::new_with_web_context(&mut context).with_url(if cookie.is_some() {
-            "about:blank"
-        } else {
-            url
-        });
+        let mut builder = WebViewBuilder::new_with_web_context(&mut context)
+            .with_url(if cookie.is_some() { "about:blank" } else { url })
+            .with_theme(Theme::Dark)
+            .with_initialization_script(DARK_THEME);
         for script in scripts {
             builder = builder.with_initialization_script(script.as_str());
         }
@@ -178,7 +178,12 @@ fn run_window(
         event_loop.run_return(|event, _, flow| {
             *flow = ControlFlow::WaitUntil(Instant::now() + TICK);
             match event {
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => *flow = ControlFlow::Exit,
+                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
+                    // WebView2 takes a moment to shut down, so hide the window
+                    // first instead of leaving it frozen on screen.
+                    window.set_visible(false);
+                    *flow = ControlFlow::Exit;
+                }
                 Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
                     if let Some(u) = waiting {
                         let visible = roblosecurity(&webview).is_some();
@@ -274,6 +279,27 @@ fn fill_script(username: &str, password: &str) -> String {
 }})();"#
     )
 }
+
+/// Keeps Roblox pages dark whatever the account's theme setting is. Roblox
+/// picks its theme with a `light-theme` or `dark-theme` class, so swap it
+/// whenever the page sets it.
+const DARK_THEME: &str = r#"(function() {
+    if (!/(^|\.)roblox\.com$/.test(location.hostname)) return;
+    function fix(el) {
+        if (el && el.classList && el.classList.contains('light-theme')) {
+            el.classList.replace('light-theme', 'dark-theme');
+        }
+    }
+    new MutationObserver(function(list) {
+        list.forEach(function(m) {
+            fix(m.target);
+            m.addedNodes.forEach(function(n) {
+                fix(n);
+                if (n.querySelectorAll) n.querySelectorAll('.light-theme').forEach(fix);
+            });
+        });
+    }).observe(document.documentElement, { attributes: true, attributeFilter: ['class'], childList: true, subtree: true });
+})();"#;
 
 /// Blocks Roblox's logout requests in session windows: logging out would end
 /// the session and invalidate the saved cookie.
