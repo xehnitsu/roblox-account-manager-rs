@@ -1,8 +1,10 @@
 [package]
 name = "roblox-account-manager-rs"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 license = "MIT"
+description = "Run several Roblox accounts side by side"
+repository = "https://github.com/xehnitsu/roblox-account-manager-rs"
 
 [dependencies]
 aes-gcm = { version = "0.11.1", features = ["getrandom"] }
