@@ -67,7 +67,6 @@ Exports are `.ramrs` files, saved to Downloads by default.
 ## Credits
 
 - Multi-instance approach based on [evanovar/RobloxAccountManager](https://github.com/evanovar/RobloxAccountManager).
-- Regenerate the icon with `powershell -File assets\make-icon.ps1`.
 
 ## License
 
