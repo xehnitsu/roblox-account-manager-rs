@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::macros::recorder::Hotkey;
+
 pub fn data_dir() -> PathBuf {
     let base = std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
     base.join("RobloxAccountManagerRS")
@@ -30,6 +32,12 @@ pub struct Config {
     pub ui_scale: f32,
     pub theme: AppTheme,
     pub auto_update: bool,
+    /// Macro record and play hotkeys: virtual-key code plus modifier bits, see
+    /// `macros::recorder::Hotkey`.
+    pub macro_record_key: u16,
+    pub macro_record_mods: u8,
+    pub macro_play_key: u16,
+    pub macro_play_mods: u8,
 }
 
 impl Default for Config {
@@ -46,7 +54,26 @@ impl Default for Config {
             ui_scale: 1.0,
             theme: AppTheme::default(),
             auto_update: true,
+            macro_record_key: 0x77,
+            macro_record_mods: 0,
+            macro_play_key: 0x78,
+            macro_play_mods: 0,
         }
+    }
+}
+
+impl Config {
+    /// (record, play)
+    pub fn macro_hotkeys(&self) -> (Hotkey, Hotkey) {
+        (
+            Hotkey { mods: self.macro_record_mods, vk: self.macro_record_key },
+            Hotkey { mods: self.macro_play_mods, vk: self.macro_play_key },
+        )
+    }
+
+    pub fn set_macro_hotkeys(&mut self, record: Hotkey, play: Hotkey) {
+        (self.macro_record_mods, self.macro_record_key) = (record.mods, record.vk);
+        (self.macro_play_mods, self.macro_play_key) = (play.mods, play.vk);
     }
 }
 

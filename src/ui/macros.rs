@@ -15,6 +15,12 @@ use crate::macros::{self, Macro, recorder};
 
 const ROW_HEIGHT: f32 = 26.0;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Hotkey {
+    Record,
+    Play,
+}
+
 pub struct State {
     macros: Vec<Macro>,
     selected: Option<usize>,
@@ -24,6 +30,8 @@ pub struct State {
     speed: f32,
     playback: Option<Playback>,
     error: Option<String>,
+    /// Hotkey waiting for its new key.
+    binding: Option<Hotkey>,
 }
 
 impl Default for State {
@@ -37,12 +45,13 @@ impl Default for State {
             speed: 1.0,
             playback: None,
             error: None,
+            binding: None,
         }
     }
 }
 
 impl State {
-    /// Handles the F8/F9 hotkeys. Call every frame.
+    /// Handles the record and play hotkeys. Call every frame.
     pub fn poll(&mut self, ctx: &egui::Context, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) {
         let keys = recorder::take_hotkeys();
         if keys & recorder::RECORD_PRESSED != 0 {
@@ -118,22 +127,89 @@ impl State {
         }
     }
 
+    /// Takes the next main key press, with the modifiers held at the time, as
+    /// the new hotkey. Modifiers alone and keys that can't be hotkeys are
+    /// ignored, so Ctrl and Shift can be held first. Esc cancels.
+    fn bind(&mut self, ui: &egui::Ui, shared: &Shared) {
+        let Some(which) = self.binding else { return };
+        let pressed = ui.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Key { key: egui::Key::Escape, pressed: true, .. } => Some(None),
+                egui::Event::Key { key, pressed: true, repeat: false, modifiers, .. } => {
+                    recorder::Hotkey::from_egui(*key, *modifiers).map(Some)
+                }
+                _ => None,
+            })
+        });
+        let Some(hotkey) = pressed else { return };
+        self.binding = None;
+        let (mut record, mut play) = shared.config.lock().unwrap().macro_hotkeys();
+        match hotkey {
+            None => {}
+            Some(h) if h == (if which == Hotkey::Record { play } else { record }) => {
+                self.error = Some(format!("{} is already the other hotkey", h.name()));
+            }
+            Some(h) => {
+                match which {
+                    Hotkey::Record => record = h,
+                    Hotkey::Play => play = h,
+                }
+                shared.config.lock().unwrap().set_macro_hotkeys(record, play);
+                shared.save_config();
+            }
+        }
+        recorder::set_keys(record, play);
+    }
+
+    /// Right-clicking a Record or Play button (even a disabled one) rebinds its hotkey.
+    fn rebind_on_right_click(&mut self, ui: &egui::Ui, resp: &egui::Response, which: Hotkey) {
+        let hint = "Right-click to change the hotkey. Ctrl, Shift and Alt combos work, like Ctrl+Shift+R.";
+        let resp = resp.clone().on_hover_text(hint).on_disabled_hover_text(hint);
+        if self.binding.is_none() && resp.contains_pointer() && ui.input(|i| i.pointer.secondary_clicked()) {
+            self.error = None;
+            self.binding = Some(which);
+            // Free the keys so the press reaches this window.
+            recorder::set_keys(recorder::Hotkey::NONE, recorder::Hotkey::NONE);
+        }
+    }
+
+    fn button_text(&self, ui: &egui::Ui, which: Hotkey, text: &str, key: &str) -> String {
+        if self.binding != Some(which) {
+            return format!("{text} ({key})");
+        }
+        // Show the modifiers held so far, e.g. "Ctrl+Shift+…".
+        let m = ui.input(|i| i.modifiers);
+        let held: String = [(m.ctrl, "Ctrl+"), (m.shift, "Shift+"), (m.alt, "Alt+")]
+            .into_iter()
+            .filter_map(|(on, name)| on.then_some(name))
+            .collect();
+        format!("Press the new hotkey: {held}… (Esc cancels)")
+    }
+
     pub fn show(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>, accounts: &HashSet<Uuid>) {
+        self.bind(ui, shared);
+        let (record, play) = shared.config.lock().unwrap().macro_hotkeys();
+        let (record_key, play_key) = (record.name(), play.name());
         let recording = recorder::is_recording();
         ui.horizontal(|ui| {
             if recording {
-                if ui.button("\u{23F9} Stop recording (F8)").clicked() {
+                if ui.button(format!("\u{23F9} Stop recording ({record_key})")).clicked() {
                     self.toggle_recording();
                 }
                 ui.spinner();
                 ui.label(format!("Recording, {} events. Switch to the game.", recorder::event_count()));
-            } else if ui.add_enabled(self.playback.is_none(), egui::Button::new("\u{23FA} Record (F8)")).clicked() {
-                self.toggle_recording();
+            } else {
+                let text = self.button_text(ui, Hotkey::Record, "\u{23FA} Record", &record_key);
+                let resp = ui.add_enabled(self.playback.is_none(), egui::Button::new(text));
+                if resp.clicked() {
+                    self.toggle_recording();
+                }
+                self.rebind_on_right_click(ui, &resp, Hotkey::Record);
             }
             ui.separator();
             match &self.playback {
                 Some(p) => {
-                    if ui.button("\u{23F9} Stop (F9)").clicked() {
+                    if ui.button(format!("\u{23F9} Stop ({play_key})")).clicked() {
                         self.toggle_playback(ui.ctx(), shared, accounts);
                     } else {
                         ui.spinner();
@@ -143,14 +219,26 @@ impl State {
                 }
                 None => {
                     let can_play = !recording && self.selected.is_some();
-                    if ui.add_enabled(can_play, egui::Button::new("\u{25B6} Play (F9)")).clicked() {
+                    let text = self.button_text(ui, Hotkey::Play, "\u{25B6} Play", &play_key);
+                    let resp = ui.add_enabled(can_play, egui::Button::new(text));
+                    if resp.clicked() {
                         self.toggle_playback(ui.ctx(), shared, accounts);
                     }
+                    self.rebind_on_right_click(ui, &resp, Hotkey::Play);
                 }
             }
         });
         if let Some(e) = &self.error {
             error_label(ui, e);
+        }
+        let taken = recorder::taken();
+        for (flag, h) in [(recorder::RECORD_PRESSED, record), (recorder::PLAY_PRESSED, play)] {
+            if self.binding.is_none() && taken & flag != 0 {
+                error_label(
+                    ui,
+                    &format!("{} is in use by another app, right-click the button to pick another", h.name()),
+                );
+            }
         }
 
         ui.add_enabled_ui(self.playback.is_none(), |ui| {
@@ -185,9 +273,9 @@ impl State {
         ui.separator();
 
         if self.macros.is_empty() {
-            ui.weak(
-                "No macros yet. Press Record (or F8), switch to the game, perform the actions, then press F8 again.",
-            );
+            ui.weak(format!(
+                "No macros yet. Press Record (or {record_key}), switch to the game, perform the actions, then press {record_key} again."
+            ));
             return;
         }
         if let Some(m) = self.selected.and_then(|i| self.macros.get_mut(i)) {

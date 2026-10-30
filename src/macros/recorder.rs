@@ -1,5 +1,5 @@
 //! Records input with low-level keyboard and mouse hooks and listens for the
-//! global hotkeys (F8 record, F9 play). Both run on one thread with its own
+//! global hotkeys (F8 record and F9 play by default). Both run on one thread with its own
 //! message loop. Hooks are installed only while recording.
 //!
 //! Injected input (including our own playback) and input while this app's
@@ -13,7 +13,10 @@ use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ScreenToClient;
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Threading::{GetCurrentProcessId, GetCurrentThreadId};
-use windows::Win32::UI::Input::KeyboardAndMouse::{MOD_NOREPEAT, RegisterHotKey, VK_F8, VK_F9};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    GetAsyncKeyState, HOT_KEY_MODIFIERS, MOD_NOREPEAT, RegisterHotKey, UnregisterHotKey, VIRTUAL_KEY, VK_CONTROL,
+    VK_MENU, VK_SHIFT,
+};
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetClientRect, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HHOOK, KBDLLHOOKSTRUCT,
     LLKHF_EXTENDED, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT, PostThreadMessageW, SetWindowsHookExW,
@@ -25,6 +28,7 @@ use super::{Button, Event, Kind};
 
 const START: u32 = WM_APP + 1;
 const STOP: u32 = WM_APP + 2;
+const REBIND: u32 = WM_APP + 3;
 const HOTKEY_RECORD: i32 = 1;
 const HOTKEY_PLAY: i32 = 2;
 /// Mouse moves closer together than this are dropped to keep recordings small.
@@ -35,6 +39,10 @@ pub const PLAY_PRESSED: u8 = 2;
 
 static THREAD: AtomicU32 = AtomicU32::new(0);
 static HOTKEYS: AtomicU8 = AtomicU8::new(0);
+/// Hotkeys another app already holds, as RECORD_PRESSED | PLAY_PRESSED bits.
+static TAKEN: AtomicU8 = AtomicU8::new(0);
+static RECORD_KEY: AtomicU32 = AtomicU32::new(0);
+static PLAY_KEY: AtomicU32 = AtomicU32::new(0);
 static CTX: OnceLock<egui::Context> = OnceLock::new();
 static RECORDING: Mutex<Option<Recording>> = Mutex::new(None);
 
@@ -44,14 +52,54 @@ struct Recording {
     last_move: u32,
 }
 
-pub fn start(ctx: egui::Context) {
+/// A key plus modifiers, like Ctrl+Shift+R. `mods` uses the RegisterHotKey
+/// bits (ALT, CTRL, SHIFT).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Hotkey {
+    pub mods: u8,
+    pub vk: u16,
+}
+
+pub const ALT: u8 = 1;
+pub const CTRL: u8 = 2;
+pub const SHIFT: u8 = 4;
+
+impl Hotkey {
+    pub const NONE: Hotkey = Hotkey { mods: 0, vk: 0 };
+
+    pub fn from_egui(key: egui::Key, m: egui::Modifiers) -> Option<Self> {
+        let mods = (if m.alt { ALT } else { 0 }) | (if m.ctrl { CTRL } else { 0 }) | (if m.shift { SHIFT } else { 0 });
+        Some(Hotkey { mods, vk: vk_of(key)? })
+    }
+
+    pub fn name(self) -> String {
+        let mut parts: Vec<String> = [(CTRL, "Ctrl"), (SHIFT, "Shift"), (ALT, "Alt")]
+            .into_iter()
+            .filter(|&(bit, _)| self.mods & bit != 0)
+            .map(|(_, n)| n.to_owned())
+            .collect();
+        parts.push(key_name(self.vk));
+        parts.join("+")
+    }
+
+    fn pack(self) -> u32 {
+        (u32::from(self.mods) << 16) | u32::from(self.vk)
+    }
+
+    fn unpack(v: u32) -> Self {
+        Hotkey { mods: (v >> 16) as u8, vk: v as u16 }
+    }
+}
+
+pub fn start(ctx: egui::Context, record: Hotkey, play: Hotkey) {
     let _ = CTX.set(ctx);
+    RECORD_KEY.store(record.pack(), Ordering::Relaxed);
+    PLAY_KEY.store(play.pack(), Ordering::Relaxed);
     std::thread::spawn(|| {
         // SAFETY: plain Win32 calls on this thread's own message queue.
         unsafe {
             THREAD.store(GetCurrentThreadId(), Ordering::Relaxed);
-            let _ = RegisterHotKey(None, HOTKEY_RECORD, MOD_NOREPEAT, VK_F8.0 as u32);
-            let _ = RegisterHotKey(None, HOTKEY_PLAY, MOD_NOREPEAT, VK_F9.0 as u32);
+            register_hotkeys();
             let mut hooks: Option<(HHOOK, HHOOK)> = None;
             let mut msg = MSG::default();
             while GetMessageW(&mut msg, None, 0, 0).as_bool() {
@@ -71,6 +119,7 @@ pub fn start(ctx: egui::Context) {
                             hooks = Some((k, m));
                         }
                     }
+                    REBIND => register_hotkeys(),
                     STOP => {
                         if let Some((k, m)) = hooks.take() {
                             let _ = UnhookWindowsHookEx(k);
@@ -82,6 +131,65 @@ pub fn start(ctx: egui::Context) {
             }
         }
     });
+}
+
+/// Registers the current keys on the recorder thread. A key of 0 is left
+/// unregistered.
+fn register_hotkeys() {
+    let mut taken = 0;
+    for (id, key, flag) in [(HOTKEY_RECORD, &RECORD_KEY, RECORD_PRESSED), (HOTKEY_PLAY, &PLAY_KEY, PLAY_PRESSED)] {
+        let key = Hotkey::unpack(key.load(Ordering::Relaxed));
+        let mods = HOT_KEY_MODIFIERS(u32::from(key.mods)) | MOD_NOREPEAT;
+        // SAFETY: hotkeys belong to this thread; unregistering a missing one just fails.
+        unsafe {
+            let _ = UnregisterHotKey(None, id);
+            if key.vk != 0 && RegisterHotKey(None, id, mods, u32::from(key.vk)).is_err() {
+                taken |= flag;
+            }
+        }
+    }
+    TAKEN.store(taken, Ordering::Relaxed);
+}
+
+/// Swaps the hotkeys. Pass `Hotkey::NONE` for both to pause them, e.g. while
+/// picking a new key.
+pub fn set_keys(record: Hotkey, play: Hotkey) {
+    RECORD_KEY.store(record.pack(), Ordering::Relaxed);
+    PLAY_KEY.store(play.pack(), Ordering::Relaxed);
+    post(REBIND);
+}
+
+pub fn taken() -> u8 {
+    TAKEN.load(Ordering::Relaxed)
+}
+
+/// Virtual-key code for an egui key, for the keys that can be hotkeys.
+pub fn vk_of(key: egui::Key) -> Option<u16> {
+    let name = key.name();
+    if let Some(n) = name.strip_prefix('F').and_then(|n| n.parse::<u16>().ok()) {
+        return (1..=24).contains(&n).then_some(0x6F + n);
+    }
+    if let [c] = name.as_bytes()
+        && c.is_ascii_alphanumeric()
+    {
+        return Some(u16::from(c.to_ascii_uppercase()));
+    }
+    Some(match key {
+        egui::Key::Insert => 0x2D,
+        egui::Key::Delete => 0x2E,
+        egui::Key::Home => 0x24,
+        egui::Key::End => 0x23,
+        egui::Key::PageUp => 0x21,
+        egui::Key::PageDown => 0x22,
+        _ => return None,
+    })
+}
+
+pub fn key_name(vk: u16) -> String {
+    egui::Key::ALL
+        .iter()
+        .find(|&&k| vk_of(k) == Some(vk))
+        .map_or_else(|| format!("key {vk:#x}"), |k| k.name().to_owned())
 }
 
 pub fn take_hotkeys() -> u8 {
@@ -146,6 +254,20 @@ pub(super) fn target_window() -> Option<HWND> {
     }
 }
 
+fn held(vk: VIRTUAL_KEY) -> bool {
+    // SAFETY: no preconditions.
+    unsafe { GetAsyncKeyState(i32::from(vk.0)) < 0 }
+}
+
+/// Whether `vk` with the modifiers held right now is one of our hotkeys.
+fn is_hotkey(vk: u16) -> bool {
+    let mods = (if held(VK_MENU) { ALT } else { 0 })
+        | (if held(VK_CONTROL) { CTRL } else { 0 })
+        | (if held(VK_SHIFT) { SHIFT } else { 0 });
+    let now = Hotkey { mods, vk };
+    [&RECORD_KEY, &PLAY_KEY].iter().any(|k| Hotkey::unpack(k.load(Ordering::Relaxed)) == now)
+}
+
 pub(super) fn to_fraction(hwnd: HWND, pt: POINT) -> (f32, f32) {
     let mut p = pt;
     let mut rect = RECT::default();
@@ -163,9 +285,10 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
     if code >= 0 {
         // SAFETY: for WH_KEYBOARD_LL, lparam points to a KBDLLHOOKSTRUCT.
         let info = unsafe { &*(lparam.0 as *const KBDLLHOOKSTRUCT) };
-        let hotkey = info.vkCode == VK_F8.0 as u32 || info.vkCode == VK_F9.0 as u32;
-        if !hotkey && (info.flags & LLKHF_INJECTED).0 == 0 && target_window().is_some() {
-            let up = matches!(wparam.0 as u32, WM_KEYUP | WM_SYSKEYUP);
+        let vk = info.vkCode as u16;
+        let up = matches!(wparam.0 as u32, WM_KEYUP | WM_SYSKEYUP);
+        let skip = !up && is_hotkey(vk);
+        if !skip && (info.flags & LLKHF_INJECTED).0 == 0 && target_window().is_some() {
             push(Kind::Key {
                 vk: info.vkCode as u16,
                 scan: info.scanCode as u16,
@@ -205,4 +328,24 @@ unsafe extern "system" fn mouse_hook(code: i32, wparam: WPARAM, lparam: LPARAM) 
     }
     // SAFETY: passes the event on unchanged.
     unsafe { CallNextHookEx(None, code, wparam, lparam) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hotkey_codes() {
+        assert_eq!(vk_of(egui::Key::F8), Some(0x77));
+        assert_eq!(vk_of(egui::Key::F24), Some(0x87));
+        assert_eq!(vk_of(egui::Key::A), Some(0x41));
+        assert_eq!(vk_of(egui::Key::Num5), Some(0x35));
+        assert_eq!(vk_of(egui::Key::Escape), None);
+        assert_eq!(key_name(0x78), "F9");
+        let mods = egui::Modifiers { ctrl: true, shift: true, ..Default::default() };
+        let h = Hotkey::from_egui(egui::Key::R, mods).unwrap();
+        assert_eq!(h, Hotkey { mods: CTRL | SHIFT, vk: 0x52 });
+        assert_eq!(h.name(), "Ctrl+Shift+R");
+        assert_eq!(Hotkey::unpack(h.pack()), h);
+    }
 }

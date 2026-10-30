@@ -306,7 +306,8 @@ impl App {
         // Take the singleton mutex as early as possible, before any Roblox starts.
         shared.multi.lock().unwrap().apply(&config.multi_instance);
         rt.spawn(crate::launcher::watchdog::run(shared.clone()));
-        crate::macros::recorder::start(cc.egui_ctx.clone());
+        let (record, play) = config.macro_hotkeys();
+        crate::macros::recorder::start(cc.egui_ctx.clone(), record, play);
         if config.auto_update {
             rt.spawn(crate::updater::run(cc.egui_ctx.clone()));
         }
