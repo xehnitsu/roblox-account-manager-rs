@@ -98,7 +98,8 @@ impl State {
                 .clicked()
             {
                 let ids = sessions.iter().filter(|s| self.selected.contains(&s.id)).map(|s| s.id).collect();
-                self.group = Some(Group::new(ids));
+                let width = shared.config.lock().unwrap().group_column_width;
+                self.group = Some(Group::new(ids, width));
             }
             if ui.button("Clear finished").clicked() {
                 shared.sessions.lock().unwrap().retain(is_active);

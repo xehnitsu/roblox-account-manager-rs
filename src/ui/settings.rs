@@ -336,8 +336,16 @@ fn updates_section(ui: &mut egui::Ui, cfg: &mut crate::config::Config, shared: &
     ui.horizontal(|ui| {
         let status = updater::status();
         let busy = matches!(status, Status::Checking | Status::Downloading(_));
-        if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
+        if ui.add_enabled(!busy, egui::Button::new("Check for updates")).clicked() {
             shared.rt.spawn(updater::run(ui.ctx().clone()));
+        }
+        if let Status::Ready(_) = status
+            && ui.button("Restart now").clicked()
+        {
+            match updater::restart() {
+                Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                Err(e) => crate::applog::log(format!("restarting failed: {e:#}")),
+            }
         }
         ui.weak(match status {
             Status::Idle => format!("Version {}", updater::CURRENT),

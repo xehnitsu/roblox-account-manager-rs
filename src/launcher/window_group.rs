@@ -7,6 +7,7 @@ use windows::Win32::Graphics::Dwm::{
     DWM_WINDOW_CORNER_PREFERENCE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DEFAULT, DWMWCP_DONOTROUND,
     DwmSetWindowAttribute,
 };
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITORINFO, MonitorFromWindow};
 use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx};
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::UI::Shell::{ITaskbarList, TaskbarList};
@@ -211,11 +212,20 @@ fn set_frame(hwnd: HWND, on: bool) {
     square_corners(hwnd, !on);
 }
 
-fn place(hwnd: HWND, c: Cell) {
+pub fn place(hwnd: HWND, c: Cell) {
     // SAFETY: SetWindowPos on a stale handle just fails.
     unsafe {
         let _ = SetWindowPos(hwnd, None, c.x, c.y, c.w, c.h, SWP_NOACTIVATE | SWP_NOZORDER);
     }
+}
+
+/// The work area (screen minus taskbar) of the monitor `hwnd` is mostly on.
+pub fn work_area(hwnd: HWND) -> Option<Cell> {
+    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    // SAFETY: info is sized for the call. A stale handle gets the nearest monitor.
+    let ok = unsafe { GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mut info) }.as_bool();
+    let r = info.rcWork;
+    ok.then_some(Cell { x: r.left, y: r.top, w: r.right - r.left, h: r.bottom - r.top })
 }
 
 pub fn rect(hwnd: HWND) -> Cell {

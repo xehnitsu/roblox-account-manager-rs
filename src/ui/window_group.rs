@@ -40,6 +40,8 @@ struct Clicks {
     ungroup: bool,
     minimize: bool,
     tile: bool,
+    fill: bool,
+    resize: bool,
 }
 
 pub struct Group {
@@ -59,11 +61,18 @@ pub struct Group {
     last_fg: HWND,
     /// Grid columns when created. Sets the bar's starting size.
     start_cols: f32,
+    /// Bar width per column, in points. Dragging the bar's right edge changes it.
+    column_width: f32,
+    /// Where the bar was before a double-click filled the screen with it, and
+    /// where the fill put it.
+    before_fill: Option<(Cell, Cell)>,
+    /// The user dragged the bar's edge, so save its width after the next tile.
+    resized: bool,
     watch: Watch,
 }
 
 impl Group {
-    pub fn new(ids: Vec<u64>) -> Self {
+    pub fn new(ids: Vec<u64>, column_width: f32) -> Self {
         let start_cols = columns(ids.len()) as f32;
         log(format!("Client group: grouping {} sessions", ids.len()));
         Self {
@@ -79,6 +88,9 @@ impl Group {
             nudged: None,
             last_fg: HWND::default(),
             start_cols,
+            column_width,
+            before_fill: None,
+            resized: false,
             watch: Watch::start(),
         }
     }
@@ -182,16 +194,34 @@ impl Group {
         self.last_fg = fg;
     }
 
-    fn sync_layout(&mut self, ctx: &egui::Context) {
+    fn sync_layout(&mut self, ctx: &egui::Context, shared: &Shared) {
         if let Some((list, b, cells)) = group_worker::take_tiled() {
             self.tiling = false;
             debug(format!("group: tiled under bar {b:?}: {cells:?}"));
             // Roblox wouldn't shrink that far, so match the bar to the grid.
             let real = wg::grid_width(&cells);
+            let ppp = ctx.input_for(viewport_id(), |i| i.viewport().native_pixels_per_point).unwrap_or(1.0);
             if real > b.w {
-                let ppp = ctx.input_for(viewport_id(), |i| i.viewport().native_pixels_per_point).unwrap_or(1.0);
                 let size = egui::vec2(real as f32 / ppp, BAR_HEIGHT);
                 ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::InnerSize(size));
+            }
+            // Remember a size the user picked for the next group, but not one
+            // set by a double-click or by Roblox's minimum window size.
+            let native = ctx.input_for(viewport_id(), |i| i.viewport().native_pixels_per_point);
+            let cols = columns(cells.len()).max(1) as f32;
+            let resize_done = self.resized && !group_bar::moving();
+            if resize_done {
+                self.resized = false;
+            }
+            if resize_done
+                && let Some(ppp) = native
+                && !cells.is_empty()
+                && real <= b.w
+            {
+                let width = b.w as f32 / ppp / cols;
+                self.column_width = width;
+                shared.config.lock().unwrap().group_column_width = width;
+                shared.save_config();
             }
             if list == raw(&self.hwnds()) {
                 self.cells = cells;
@@ -218,7 +248,7 @@ impl Group {
         self.rescan(shared);
         self.sync_restore(ctx);
         self.sync_focus();
-        self.sync_layout(ctx);
+        self.sync_layout(ctx, shared);
         ctx.request_repaint_after(TICK);
 
         let clicks = self.show_bar(ctx);
@@ -231,28 +261,76 @@ impl Group {
             group_bar::snapshot();
             ctx.send_viewport_cmd_to(viewport_id(), egui::ViewportCommand::Minimized(true));
         }
+        self.resized |= clicks.resize;
+        if clicks.fill {
+            self.toggle_fill();
+        }
         !clicks.ungroup
+    }
+
+    /// Double-clicking the bar moves it to the top of its screen at full width,
+    /// or as wide as fits the grid's height. Double-clicking again, without
+    /// moving it in between, puts it back.
+    fn toggle_fill(&mut self) {
+        let Some(bar) = self.bar else { return };
+        let now = wg::rect(bar);
+        // Moved since the fill: fill again instead of going back.
+        let filled = self.before_fill.take().filter(|&(_, at)| (at.x, at.y) == (now.x, now.y));
+        let to = match filled {
+            Some((before, _)) => before,
+            None => {
+                let Some(area) = wg::work_area(bar) else { return };
+                let n = self.members.len().max(1);
+                let cols = columns(n) as f32;
+                let rows = n.div_ceil(columns(n)) as f32;
+                // Cells are 4:3, so the grid is rows * 0.75 * width / cols tall.
+                let fits = (area.h - now.h) as f32 * cols / (rows * 0.75);
+                let w = (area.w as f32).min(fits) as i32;
+                let at = Cell { x: area.x + (area.w - w) / 2, y: area.y, w, h: now.h };
+                self.before_fill = Some((now, at));
+                at
+            }
+        };
+        debug(format!("group: double-click, bar to {to:?}"));
+        wg::place(bar, Cell { h: now.h, ..to });
+        self.force = true;
     }
 
     fn show_bar(&self, ctx: &egui::Context) -> Clicks {
         let n = self.members.len();
-        let cols = self.start_cols;
+        // Never open wider than the screen, whatever was saved.
+        let screen = ctx.input(|i| i.viewport().monitor_size).map_or(f32::INFINITY, |s| s.x - 80.0);
+        let width = (self.start_cols * self.column_width).min(screen).max(200.0);
         let builder = egui::ViewportBuilder::default()
             .with_title(TITLE)
             .with_decorations(false)
             .with_position([40.0, 40.0])
-            .with_inner_size([cols * 400.0, BAR_HEIGHT])
-            .with_resizable(false);
+            .with_inner_size([width, BAR_HEIGHT])
+            .with_min_inner_size([200.0, BAR_HEIGHT])
+            .with_max_inner_size([100_000.0, BAR_HEIGHT])
+            .with_resizable(true);
 
         ctx.show_viewport_immediate(viewport_id(), builder, |ui, _| {
             let mut clicks = Clicks { ungroup: ui.input(|i| i.viewport().close_requested()), ..Default::default() };
             let frame = egui::Frame::NONE.fill(ui.visuals().panel_fill).inner_margin(egui::Margin::symmetric(6, 0));
             egui::CentralPanel::default().frame(frame).show(ui, |ui| {
                 // Added first so buttons on top still get clicks.
-                let bar = ui.interact(ui.max_rect(), ui.id().with("drag"), egui::Sense::drag());
+                // Click and drag, so a drag starts only once the mouse moves
+                // and a double-click still gets through.
+                let bar = ui.interact(ui.max_rect(), ui.id().with("drag"), egui::Sense::click_and_drag());
                 // Any other button would start a move that only a left click ends.
                 if bar.drag_started_by(egui::PointerButton::Primary) {
                     ui.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+                clicks.fill = bar.double_clicked();
+                // The right edge resizes the bar, and the grid follows its width.
+                let full = ui.max_rect().expand2(egui::vec2(6.0, 0.0));
+                let edge = egui::Rect::from_x_y_ranges(full.right() - 6.0..=full.right(), full.y_range());
+                let grip = ui.interact(edge, ui.id().with("resize"), egui::Sense::drag());
+                let grip = grip.on_hover_cursor(egui::CursorIcon::ResizeHorizontal);
+                clicks.resize = grip.drag_started_by(egui::PointerButton::Primary);
+                if clicks.resize {
+                    ui.send_viewport_cmd(egui::ViewportCommand::BeginResize(egui::viewport::ResizeDirection::East));
                 }
                 ui.horizontal_centered(|ui| {
                     match n {

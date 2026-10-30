@@ -20,7 +20,8 @@ use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System};
 
 use crate::accounts::Account;
 use crate::applog::log;
-use crate::roblox_api::{auth, games};
+use crate::roblox_api::presence::{self, PresenceType};
+use crate::roblox_api::{auth, find_player, games};
 
 pub const PLAYER_EXE: &str = "RobloxPlayerBeta.exe";
 
@@ -74,7 +75,16 @@ pub enum TargetInput {
     Home,
     Place(String),
     PrivateServer(String),
-    Job { place_id: String, job_id: String },
+    Job {
+        place_id: String,
+        job_id: String,
+    },
+    /// Join a friend by username or user ID. `place` is a fallback for when
+    /// their game is hidden.
+    Follow {
+        user: String,
+        place: String,
+    },
 }
 
 fn parse_place(s: &str) -> Result<u64> {
@@ -82,9 +92,9 @@ fn parse_place(s: &str) -> Result<u64> {
     if let Ok(id) = s.parse() {
         return Ok(id);
     }
-    // Accept a game URL too: https://www.roblox.com/games/<id>/name
+    // Accept a game link too: https://www.roblox.com/games/<id>/name
     let re = regex::Regex::new(r"/games/(\d+)").unwrap();
-    re.captures(s).and_then(|c| c[1].parse().ok()).ok_or_else(|| anyhow!("'{s}' is not a place ID or game URL"))
+    re.captures(s).and_then(|c| c[1].parse().ok()).ok_or_else(|| anyhow!("'{s}' is not a place ID or game link"))
 }
 
 /// Place ID in the launch panel's first field, if it shows one without a
@@ -113,10 +123,16 @@ pub fn parse_private_link(input: &str) -> Result<PrivateLink> {
     bail!("link has neither privateServerLinkCode nor a share code")
 }
 
-pub fn game_input(place_or_link: &str, job_id: &str) -> Result<TargetInput> {
-    let (first, job_id) = (place_or_link.trim(), job_id.trim());
+pub fn game_input(place_or_link: &str, job_id: &str, friend: &str) -> Result<TargetInput> {
+    let (first, job_id, friend) = (place_or_link.trim(), job_id.trim(), friend.trim());
+    if !friend.is_empty() {
+        if !job_id.is_empty() {
+            bail!("a friend can't be combined with a job ID");
+        }
+        return Ok(TargetInput::Follow { user: friend.to_owned(), place: first.to_owned() });
+    }
     if first.is_empty() {
-        bail!("enter a place ID, game URL or private server link");
+        bail!("enter a place ID, game link or private server link");
     }
     if parse_private_link(first).is_ok() {
         if !job_id.is_empty() {
@@ -141,6 +157,19 @@ pub async fn resolve_target(cookie: &str, input: &TargetInput) -> Result<LaunchT
                 bail!("job ID is empty");
             }
             LaunchTarget::Job { place_id: parse_place(place_id)?, job_id: job_id.to_owned() }
+        }
+        TargetInput::Follow { user, place } => {
+            let (user_id, name) = find_player::user_id(user).await?;
+            let p = presence::presence(cookie, user_id).await?;
+            if p.kind != PresenceType::InGame {
+                bail!("{name} isn't in a game");
+            }
+            let place_id = match p.place_id {
+                Some(id) => id,
+                None if !place.is_empty() => parse_place(place)?,
+                None => bail!("{name}'s game is hidden, enter its place ID too"),
+            };
+            LaunchTarget::Follow { place_id, user_id }
         }
         TargetInput::PrivateServer(link) => match parse_private_link(link)? {
             PrivateLink::Direct { place_id, link_code } => LaunchTarget::PrivateServer { place_id, link_code },
@@ -352,14 +381,16 @@ mod tests {
 
     #[test]
     fn game_input_picks_target() {
-        assert!(matches!(game_input("123", "").unwrap(), TargetInput::Place(p) if p == "123"));
-        assert!(matches!(game_input(" 123 ", "abc").unwrap(), TargetInput::Job { job_id, .. } if job_id == "abc"));
+        assert!(matches!(game_input("123", "", "").unwrap(), TargetInput::Place(p) if p == "123"));
+        assert!(matches!(game_input(" 123 ", "abc", "").unwrap(), TargetInput::Job { job_id, .. } if job_id == "abc"));
         let link = "https://www.roblox.com/share?code=xyz&type=Server";
-        assert!(matches!(game_input(link, "").unwrap(), TargetInput::PrivateServer(_)));
-        assert!(game_input(link, "abc").is_err());
-        assert!(game_input("", "abc").is_err());
+        assert!(matches!(game_input(link, "", "").unwrap(), TargetInput::PrivateServer(_)));
+        assert!(game_input(link, "abc", "").is_err());
+        assert!(game_input("", "abc", "").is_err());
         let game_url = "https://www.roblox.com/games/123/name";
-        assert!(matches!(game_input(game_url, "").unwrap(), TargetInput::Place(_)));
+        assert!(matches!(game_input(game_url, "", "").unwrap(), TargetInput::Place(_)));
+        assert!(matches!(game_input("", "", " bob ").unwrap(), TargetInput::Follow { user, .. } if user == "bob"));
+        assert!(game_input("123", "abc", "bob").is_err());
     }
 
     #[test]
