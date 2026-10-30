@@ -36,6 +36,8 @@ pub struct Config {
     pub ui_scale: f32,
     pub theme: AppTheme,
     pub auto_update: bool,
+    /// Restart as administrator at startup, for handle64 mode.
+    pub elevate_on_start: bool,
     /// Macro record and play hotkeys: virtual-key code plus modifier bits, see
     /// `macros::recorder::Hotkey`.
     pub macro_record_key: u16,
@@ -61,6 +63,7 @@ impl Default for Config {
             ui_scale: 1.0,
             theme: AppTheme::default(),
             auto_update: true,
+            elevate_on_start: false,
             macro_record_key: 0x77,
             macro_record_mods: 0,
             macro_play_key: 0x78,

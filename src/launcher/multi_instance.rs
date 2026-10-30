@@ -110,6 +110,23 @@ pub fn is_admin() -> bool {
     unsafe { windows::Win32::UI::Shell::IsUserAnAdmin().as_bool() }
 }
 
+/// Starts this app again as administrator, after Windows asks. A running
+/// process can't gain admin rights, so the caller closes this copy after.
+/// The new copy waits for it to exit so it can take the singleton mutex.
+pub fn elevate() -> Result<()> {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    let exe = HSTRING::from(std::env::current_exe()?.as_os_str());
+    let args = HSTRING::from(format!("{} {}", crate::updater::WAIT_FLAG, std::process::id()));
+    // SAFETY: the strings outlive the call.
+    let r = unsafe { ShellExecuteW(None, &HSTRING::from("runas"), &exe, &args, None, SW_SHOWNORMAL) };
+    // Anything above 32 means it started. Saying no to the prompt is a failure.
+    if r.0 as isize <= 32 {
+        bail!("Windows didn't start it as administrator");
+    }
+    Ok(())
+}
+
 pub fn find_handle64() -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)) {
