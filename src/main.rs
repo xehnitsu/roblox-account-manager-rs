@@ -20,11 +20,18 @@ fn main() -> eframe::Result<()> {
     if args.get(1).map(String::as_str) == Some(webview::CHILD_FLAG) {
         std::process::exit(webview::child_main(args.get(2).map_or("", String::as_str)));
     }
-    // Restarted after an update: let the old instance exit first.
+    // Restarted after an update or to elevate: let the old instance exit first.
     if args.get(1).map(String::as_str) == Some(updater::WAIT_FLAG)
         && let Some(pid) = args.get(2).and_then(|p| p.parse().ok())
     {
         updater::wait_for(pid);
+    }
+    // If the admin prompt is declined, carry on without admin rights.
+    if config::Config::load().elevate_on_start
+        && !launcher::multi_instance::is_admin()
+        && launcher::multi_instance::elevate().is_ok()
+    {
+        return Ok(());
     }
     let rt = tokio::runtime::Builder::new_multi_thread().worker_threads(4).enable_all().build().expect("tokio runtime");
     let handle = rt.handle().clone();

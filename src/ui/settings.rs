@@ -70,8 +70,25 @@ impl State {
                     "Also close singleton handles with handle64.exe (needs administrator)",
                 );
                 ui.indent("h64", |ui| {
-                    let admin = multi_instance::is_admin();
-                    ui.label(if admin { "Running as administrator." } else { "Not running as administrator." });
+                    if multi_instance::is_admin() {
+                        ui.label("Running as administrator.");
+                    } else {
+                        ui.horizontal(|ui| {
+                            ui.label("Not running as administrator.");
+                            if ui
+                                .button("Elevate")
+                                .on_hover_text("Restart the app as administrator. Windows asks first.")
+                                .clicked()
+                            {
+                                match multi_instance::elevate() {
+                                    Ok(()) => ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close),
+                                    Err(e) => crate::applog::log(format!("elevating failed: {e:#}")),
+                                }
+                            }
+                        });
+                    }
+                    ui.checkbox(&mut cfg.elevate_on_start, "Elevate on start")
+                        .on_hover_text("Always restart as administrator when the app opens. Windows asks each time.");
                     match multi_instance::find_handle64() {
                         Some(p) => {
                             ui.label(format!("handle64.exe: {}", p.display()));
