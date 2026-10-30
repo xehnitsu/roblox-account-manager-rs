@@ -12,7 +12,7 @@ use super::{Pending, error_label, poll};
 use crate::accounts::Account;
 use crate::app::Shared;
 use crate::applog::log;
-use crate::config::Config;
+use crate::config::{Config, RecentGame};
 use crate::launcher::{TargetInput, game_input, input_place_id, resolve_target, watchdog};
 
 pub struct State {
@@ -175,7 +175,7 @@ impl State {
         ui.add_space(4.0);
         let full = f32::INFINITY;
         self.game_card(ui, shared);
-        ui.label("Place ID, game URL or private server link");
+        ui.label("Place ID, game link or private server link");
         ui.add(egui::TextEdit::singleline(&mut self.place).desired_width(full).hint_text("920587237"));
         ui.label("Job ID");
         ui.add(egui::TextEdit::singleline(&mut self.job_id).desired_width(full).hint_text("Any server"));
@@ -243,7 +243,7 @@ impl State {
     }
 
     fn game_history(&mut self, ui: &mut egui::Ui, shared: &Arc<Shared>) {
-        let recent = shared.config.lock().unwrap().recent_places.clone();
+        let recent = shared.config.lock().unwrap().recent_games.clone();
         if recent.is_empty() {
             return;
         }
@@ -251,7 +251,7 @@ impl State {
         ui.horizontal(|ui| {
             ui.strong("Recent games");
             if ui.small_button("Clear").clicked() {
-                shared.config.lock().unwrap().recent_places.clear();
+                shared.config.lock().unwrap().recent_games.clear();
                 shared.save_config();
             }
         });
@@ -259,8 +259,12 @@ impl State {
         let mut remove = None;
         ui.scope(|ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
-            for (i, &place_id) in recent.iter().enumerate() {
-                let selected = current == Some(place_id);
+            for (i, game) in recent.iter().enumerate() {
+                let place_id = game.place_id;
+                let selected = match &game.link {
+                    Some(link) => self.place.trim() == link,
+                    None => current == Some(place_id),
+                };
                 let (inner, resp) = rows::row(ui, i, 36.0, selected, egui::Sense::click(), true);
                 let info = shared.place_info(place_id);
                 if ui.is_rect_visible(resp.rect) {
@@ -271,7 +275,10 @@ impl State {
                             ui.painter().rect_filled(icon, 4.0, ui.visuals().widgets.inactive.bg_fill);
                         }
                     }
-                    let name = info.map_or_else(|| format!("Place {place_id}"), |i| i.name);
+                    let mut name = info.map_or_else(|| format!("Place {place_id}"), |i| i.name);
+                    if game.link.is_some() {
+                        name.push_str(" (private server)");
+                    }
                     let color = rows::text_color(ui, selected);
                     rows::cell(
                         ui,
@@ -280,25 +287,35 @@ impl State {
                         egui::RichText::new(name).color(color),
                     );
                 }
-                let resp = resp.on_hover_text(format!("Place {place_id}"));
+                let resp = resp.on_hover_text(match &game.link {
+                    Some(link) => format!("Private server in place {place_id}\n{link}"),
+                    None => format!("Place {place_id}"),
+                });
                 if resp.clicked() {
-                    self.place = place_id.to_string();
+                    self.place = game.link.clone().unwrap_or_else(|| place_id.to_string());
                     self.job_id.clear();
+                    self.friend.clear();
                 }
                 resp.context_menu(|ui| {
                     if ui.button("Copy place ID").clicked() {
                         ui.ctx().copy_text(place_id.to_string());
                         ui.close();
                     }
+                    if let Some(link) = &game.link
+                        && ui.button("Copy link").clicked()
+                    {
+                        ui.ctx().copy_text(link.clone());
+                        ui.close();
+                    }
                     if ui.button("Remove from history").clicked() {
-                        remove = Some(place_id);
+                        remove = Some(game.clone());
                         ui.close();
                     }
                 });
             }
         });
-        if let Some(place_id) = remove {
-            shared.config.lock().unwrap().recent_places.retain(|p| *p != place_id);
+        if let Some(game) = remove {
+            shared.config.lock().unwrap().recent_games.retain(|g| *g != game);
             shared.save_config();
         }
     }
@@ -381,7 +398,11 @@ impl State {
             let first = s.account(ids[0]).ok_or_else(|| anyhow::anyhow!("account vanished"))?;
             let target = resolve_target(&first.cookie, &input).await?;
             if let Some(place_id) = target.place_id() {
-                s.config.lock().unwrap().remember_place(place_id);
+                let link = match &input {
+                    TargetInput::PrivateServer(link) => Some(link.trim().to_owned()),
+                    _ => None,
+                };
+                s.config.lock().unwrap().remember_game(RecentGame { place_id, link });
                 s.save_config();
             }
             for id in &ids {

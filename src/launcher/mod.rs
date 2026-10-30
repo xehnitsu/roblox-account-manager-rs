@@ -92,9 +92,9 @@ fn parse_place(s: &str) -> Result<u64> {
     if let Ok(id) = s.parse() {
         return Ok(id);
     }
-    // Accept a game URL too: https://www.roblox.com/games/<id>/name
+    // Accept a game link too: https://www.roblox.com/games/<id>/name
     let re = regex::Regex::new(r"/games/(\d+)").unwrap();
-    re.captures(s).and_then(|c| c[1].parse().ok()).ok_or_else(|| anyhow!("'{s}' is not a place ID or game URL"))
+    re.captures(s).and_then(|c| c[1].parse().ok()).ok_or_else(|| anyhow!("'{s}' is not a place ID or game link"))
 }
 
 /// Place ID in the launch panel's first field, if it shows one without a
@@ -132,7 +132,7 @@ pub fn game_input(place_or_link: &str, job_id: &str, friend: &str) -> Result<Tar
         return Ok(TargetInput::Follow { user: friend.to_owned(), place: first.to_owned() });
     }
     if first.is_empty() {
-        bail!("enter a place ID, game URL or private server link");
+        bail!("enter a place ID, game link or private server link");
     }
     if parse_private_link(first).is_ok() {
         if !job_id.is_empty() {

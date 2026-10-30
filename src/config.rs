@@ -26,6 +26,10 @@ pub struct Config {
     /// one has joined its game (read from its log), up to `JOIN_WAIT_MAX`.
     pub wait_for_join: bool,
     pub last_place_id: String,
+    /// Newest first.
+    pub recent_games: Vec<RecentGame>,
+    /// Older history format, moved into `recent_games` on load.
+    #[serde(skip_serializing)]
     pub recent_places: Vec<u64>,
     /// Group priority: the account list shows these groups first, in this order.
     pub group_order: Vec<String>,
@@ -51,6 +55,7 @@ impl Default for Config {
             launch_delay_ms: 500,
             wait_for_join: true,
             last_place_id: String::new(),
+            recent_games: Vec::new(),
             recent_places: Vec::new(),
             group_order: Vec::new(),
             ui_scale: 1.0,
@@ -195,15 +200,30 @@ impl AfkMode {
 
 pub const MAX_RECENT_PLACES: usize = 12;
 
+/// A game in the launch history: a place, or a private server in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentGame {
+    pub place_id: u64,
+    /// The private server link as entered.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+}
+
 impl Config {
-    pub fn remember_place(&mut self, place_id: u64) {
-        self.recent_places.retain(|p| *p != place_id);
-        self.recent_places.insert(0, place_id);
-        self.recent_places.truncate(MAX_RECENT_PLACES);
+    pub fn remember_game(&mut self, game: RecentGame) {
+        self.recent_games.retain(|g| *g != game);
+        self.recent_games.insert(0, game);
+        self.recent_games.truncate(MAX_RECENT_PLACES);
     }
 
     pub fn load() -> Self {
-        std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let mut c: Self =
+            std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        if c.recent_games.is_empty() {
+            c.recent_games = c.recent_places.iter().map(|&place_id| RecentGame { place_id, link: None }).collect();
+        }
+        c.recent_places.clear();
+        c
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -220,14 +240,17 @@ mod tests {
     #[test]
     fn game_history_order() {
         let mut c = Config::default();
+        let place = |place_id| RecentGame { place_id, link: None };
         for id in [1, 2, 3, 2] {
-            c.remember_place(id);
+            c.remember_game(place(id));
         }
-        assert_eq!(c.recent_places, [2, 3, 1]);
+        let private = RecentGame { place_id: 1, link: Some("https://www.roblox.com/share?code=x".into()) };
+        c.remember_game(private.clone());
+        assert_eq!(c.recent_games, [private, place(2), place(3), place(1)]);
         for id in 10..40 {
-            c.remember_place(id);
+            c.remember_game(place(id));
         }
-        assert_eq!(c.recent_places.len(), MAX_RECENT_PLACES);
-        assert_eq!(c.recent_places[0], 39);
+        assert_eq!(c.recent_games.len(), MAX_RECENT_PLACES);
+        assert_eq!(c.recent_games[0], place(39));
     }
 }
