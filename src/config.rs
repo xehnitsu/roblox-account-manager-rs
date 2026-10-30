@@ -38,6 +38,8 @@ pub struct Config {
     pub macro_record_mods: u8,
     pub macro_play_key: u16,
     pub macro_play_mods: u8,
+    /// Client group bar width per grid column, in points.
+    pub group_column_width: f32,
 }
 
 impl Default for Config {
@@ -58,6 +60,7 @@ impl Default for Config {
             macro_record_mods: 0,
             macro_play_key: 0x78,
             macro_play_mods: 0,
+            group_column_width: 400.0,
         }
     }
 }
