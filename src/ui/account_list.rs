@@ -21,6 +21,7 @@ pub struct State {
     filter: String,
     place: String,
     job_id: String,
+    friend: String,
     launching: Option<Pending<anyhow::Result<usize>>>,
     opening_browser: Option<Pending<anyhow::Result<()>>>,
     refreshing: Option<Pending<(usize, usize)>>,
@@ -83,6 +84,7 @@ impl State {
             filter: String::new(),
             place: cfg.last_place_id.clone(),
             job_id: String::new(),
+            friend: String::new(),
             launching: None,
             opening_browser: None,
             refreshing: None,
@@ -175,8 +177,10 @@ impl State {
         self.game_card(ui, shared);
         ui.label("Place ID, game URL or private server link");
         ui.add(egui::TextEdit::singleline(&mut self.place).desired_width(full).hint_text("920587237"));
-        ui.label("Job ID (optional, joins that server)");
+        ui.label("Job ID");
         ui.add(egui::TextEdit::singleline(&mut self.job_id).desired_width(full).hint_text("Any server"));
+        ui.label("Friend");
+        ui.add(egui::TextEdit::singleline(&mut self.friend).desired_width(full).hint_text("Username or user ID"));
         ui.add_space(6.0);
         let n = self.selected.len();
         let label = match n {
@@ -364,7 +368,7 @@ impl State {
         shared.config.lock().unwrap().last_place_id = self.place.clone();
         shared.save_config();
         let ids = self.selected_in_order(shared);
-        let input = if home { Ok(TargetInput::Home) } else { game_input(&self.place, &self.job_id) };
+        let input = if home { Ok(TargetInput::Home) } else { game_input(&self.place, &self.job_id, &self.friend) };
         let input = match input {
             Ok(i) => i,
             Err(e) => {

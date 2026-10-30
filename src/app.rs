@@ -242,7 +242,6 @@ pub enum Tab {
     Accounts,
     Servers,
     Universe,
-    Friends,
     Macros,
     Sessions,
     Settings,
@@ -262,7 +261,6 @@ pub struct App {
     add_ui: ui::add_account::State,
     servers_ui: ui::server_browser::State,
     universe_ui: ui::universe::State,
-    friends_ui: ui::friends::State,
     macros_ui: ui::macros::State,
     sessions_ui: ui::sessions::State,
     settings_ui: ui::settings::State,
@@ -318,7 +316,6 @@ impl App {
             add_ui: Default::default(),
             servers_ui: ui::server_browser::State::new(&config),
             universe_ui: ui::universe::State::new(&config),
-            friends_ui: Default::default(),
             macros_ui: Default::default(),
             sessions_ui: ui::sessions::State::default(),
             settings_ui: Default::default(),
@@ -413,7 +410,6 @@ impl eframe::App for App {
                     (Tab::Accounts, "Accounts"),
                     (Tab::Servers, "Server browser"),
                     (Tab::Universe, "Universe"),
-                    (Tab::Friends, "Friends"),
                     (Tab::Macros, "Macros"),
                     (Tab::Sessions, "Sessions"),
                     (Tab::Settings, "Settings"),
@@ -470,7 +466,6 @@ impl eframe::App for App {
                             self.tab = Tab::Servers;
                         }
                     }
-                    Tab::Friends => self.friends_ui.show(ui, &self.shared, &self.accounts_ui.selected),
                     Tab::Macros => self.macros_ui.show(ui, &self.shared, &self.accounts_ui.selected),
                     Tab::Sessions => self.sessions_ui.show(ui, &self.shared),
                     _ => self.settings_ui.show(ui, &self.shared),
